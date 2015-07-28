@@ -4,7 +4,8 @@ Downloading files
 
 ## Install
 
-``` go get https://github.com/saromanov/godownload
+``` 
+go get https://github.com/saromanov/godownload
 ```
 
 ## Usage
