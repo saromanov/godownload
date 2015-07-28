@@ -26,5 +26,5 @@ func main() {
 
 Download with set output file
 ```go
-godownload.Download("http://arxiv.org/pdf/1206.5538v3.pdf", &godownload.Item{Outpath: "fun.pdf"})
+godownload.Download("http://arxiv.org/pdf/1206.5538v3.pdf", &godownload.Options{Outpath: "fun.pdf"})
 ```
