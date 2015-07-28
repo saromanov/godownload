@@ -1,4 +1,4 @@
-# godownload
+# godownload [![Build Status](https://travis-ci.org/saromanov/godownload.svg?branch=master)](https://travis-ci.org/saromanov/godownload)
 
 Downloading files
 
