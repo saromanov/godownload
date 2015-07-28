@@ -12,24 +12,24 @@ import (
 	"sync"
 )
 
-type Item struct {
+type Options struct {
 	Url       string
 	Outpath   string
 	Overwrite bool
 }
 
 //Downloading provides file downloading
-func Download(path string, item *Item) {
+func Download(path string, item *Options) {
 	var outpath string
 	if item != nil {
 		if checkExist(item.Outpath) && !item.Overwrite {
-			log.Fatal(fmt.Sprintf("File %s already exist. You can set Item.Overwrite = true for overwrite this file", item.Outpath))
+			log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
 		}
 		outpath = item.Outpath
 	} else {
 		outpath = getFileNameFromUrl(path)
 		if checkExist(outpath) {
-			log.Fatal(fmt.Sprintf("File %s already exist. You can set Item.Overwrite = true for overwrite this file", path))
+			log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path))
 		}
 	}
 
@@ -43,12 +43,12 @@ func Download(path string, item *Item) {
 }
 
 //DownloadMany provides downloading several files
-func DownloadMany(items []*Item) {
+func DownloadMany(items []*Options) {
 	runtime.GOMAXPROCS(2)
 	var wg sync.WaitGroup
 	for _, item := range items {
 		wg.Add(1)
-		go func(it *Item) {
+		go func(it *Options) {
 			Download(it.Url, it)
 			wg.Done()
 		}(item)
@@ -58,9 +58,9 @@ func DownloadMany(items []*Item) {
 
 //DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
 func DownloadManySimple(items []string) {
-	result := []*Item{}
+	result := []*Options{}
 	for _, item := range items {
-		result = append(result, &Item{Url: item, Outpath: getFileNameFromUrl(item)})
+		result = append(result, &Options{Url: item, Outpath: getFileNameFromUrl(item)})
 	}
 	DownloadMany(result)
 }
