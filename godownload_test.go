@@ -5,7 +5,10 @@ import
 	"testing"
 	"os"
 	"fmt"
+	"io/ioutil"
 )
+
+//http://www.gnu.org/software/wget/manual/wget.html
 
 func exist(path string) bool {
 	return checkExist(path)
@@ -17,6 +20,18 @@ func remove(t *testing.T, path string){
 		t.Fatal(err)
 	}
 }
+
+func createFileWithLinks(filename string){
+	data := `This file contains interesting links!
+	First: https://github.com/saromanov/godownload/archive/master.zip \n
+	Second: http://arxiv.org/pdf/1206.5538v3.pdf`
+
+	err := ioutil.WriteFile(filename, []byte(data), 0777)
+	if err != nil {
+		panic(err)
+	}
+}
+
 
 
 func TestDownload(t *testing.T){
@@ -37,6 +52,23 @@ func TestDownloadMany (t *testing. T) {
 	}
 
 	DownloadMany(items)
+	if !exist(path1) {
+		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path1))
+	}
+
+	if !exist(path2) {
+		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path2))
+	}
+
+	remove(t, path1)
+	remove(t, path2)
+}
+
+func TestFromFile(t *testing.T) {
+	path1 := "master.zip"
+	path2 := "1206.5538v3.pdf"
+	createFileWithLinks("simple")
+	FromFile("simple")
 	if !exist(path1) {
 		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path1))
 	}
