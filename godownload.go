@@ -1,6 +1,7 @@
 package godownload
 
 import (
+	"path/filepath"
 	"fmt"
 	"io"
 	"log"
@@ -8,20 +9,20 @@ import (
 	"net/url"
 	"os"
 	"runtime"
-	"sync"
 	"strings"
+	"sync"
 )
 
 type Options struct {
 
 	// Url parameter needs only for DownloadMany.
 	// In the case with Download. This paremeter will be ignore
-	Url       string
+	Url string
 
 	//Outpath sets the path of the downloaded file
-	Outpath   string
+	Outpath string
 
-	//Overwrite provides overwriting file with same name 
+	//Overwrite provides overwriting file with same name
 	Overwrite bool
 
 	//Always create new file. If file with same name exist
@@ -33,8 +34,17 @@ type Options struct {
 func Download(path string, item *Options) {
 	var outpath string
 	if item != nil {
-		if checkExist(item.Outpath) && !item.Overwrite {
-			log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
+		if checkExist(item.Outpath) {
+			if item.Alwaysnew {
+				ext := filepath.Ext(item.Outpath)
+				newname := item.Outpath[0: len(item.Outpath) - len(ext)] + "_1"
+				if len(ext) > 0 {
+					newname = newname + "." + ext
+				}
+			}
+			if !item.Overwrite {
+				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
+			}
 		}
 		outpath = item.Outpath
 	} else {
