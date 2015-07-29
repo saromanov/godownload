@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
+	"strings"
 )
 
 type Options struct {
@@ -67,7 +67,7 @@ func DownloadManySimple(items []string) {
 
 //FromFile provides getting links from file and download
 func FromFile(path string) {
-
+	fromFile(path)
 }
 
 func checkExist(path string) bool {
