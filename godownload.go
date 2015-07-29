@@ -13,9 +13,20 @@ import (
 )
 
 type Options struct {
+
+	// Url parameter needs only for DownloadMany.
+	// In the case with Download. This paremeter will be ignore
 	Url       string
+
+	//Outpath sets the path of the downloaded file
 	Outpath   string
+
+	//Overwrite provides overwriting file with same name 
 	Overwrite bool
+
+	//Always create new file. If file with same name exist
+	// create "file_1"
+	Alwaysnew bool
 }
 
 //Downloading provides file downloading
