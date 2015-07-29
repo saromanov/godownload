@@ -47,10 +47,13 @@ func fromFile(path string) {
 		}
 	}
 	log.Printf(fmt.Sprintf("In the file %s, found URLs: %d", path, len(keyurls)))
+	fmt.Println("URLs: ")
 	urls := []string{}
 	for key := range keyurls {
+		fmt.Println(key)
 		urls = append(urls, key)
 	}
+	fmt.Println("\n")
 
 	DownloadManySimple(urls)
 }
