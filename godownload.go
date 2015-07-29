@@ -37,16 +37,19 @@ func Download(path string, item *Options) {
 		if checkExist(item.Outpath) {
 			if item.Alwaysnew {
 				ext := filepath.Ext(item.Outpath)
-				newname := item.Outpath[0: len(item.Outpath) - len(ext)] + "_1"
+				dupcount := fileCount(item.Outpath)
+				newname := item.Outpath[0: len(item.Outpath) - len(ext)] + 
+							fmt.Sprintf("_%d", dupcount+1)
 				if len(ext) > 0 {
 					newname = newname + "." + ext
 				}
-			}
-			if !item.Overwrite {
+				outpath = filepath.Dir(item.Outpath) + "/" + newname
+			} else if !item.Overwrite {
 				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
+			} else {
+				outpath = item.Outpath
 			}
 		}
-		outpath = item.Outpath
 	} else {
 		outpath = getFileNameFromUrl(path)
 		if checkExist(outpath) {
