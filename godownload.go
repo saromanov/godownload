@@ -1,16 +1,17 @@
 package godownload
 
 import (
-	"path/filepath"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Options struct {
@@ -32,34 +33,9 @@ type Options struct {
 
 //Downloading provides file downloading
 func Download(path string, item *Options) {
-	var outpath string
-	if item != nil {
-		if checkExist(item.Outpath) {
-			if item.Alwaysnew {
-				ext := filepath.Ext(item.Outpath)
-				fmt.Println(ext)
-				dupcount := fileCount(item.Outpath)
-				newname := item.Outpath[0: len(item.Outpath) - len(ext)] + 
-							fmt.Sprintf("_%d", dupcount+1)
-				if len(ext) > 0 {
-					newname = newname + ext
-				}
-				outpath = filepath.Dir(item.Outpath) + "/" + newname
-			} else if !item.Overwrite {
-				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
-			} else {
-				outpath = item.Outpath
-			}
-		} else {
-			outpath = item.Outpath
-		}
-	} else {
-		outpath = getFileNameFromUrl(path)
-		if checkExist(outpath) {
-			log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path))
-		}
-	}
+	outpath := outpathResolver(path, item)
 
+	//Last chance to check if outpath is not empty
 	if outpath == "" {
 		log.Fatal("Something wen wrong and outpath is empty")
 	}
@@ -67,10 +43,11 @@ func Download(path string, item *Options) {
 	obj := createTargetFile(outpath)
 	defer obj.Close()
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
+	starttime := time.Now()
 	resp := download(path)
 	defer resp.Body.Close()
 	copyToFile(resp, obj)
-	log.Printf(fmt.Sprintf("Finish to download from %s", path))
+	log.Printf(fmt.Sprintf("Finish to download from %s in %s", path, time.Since(starttime)))
 }
 
 //DownloadMany provides downloading several files
@@ -141,4 +118,38 @@ func getFileNameFromUrl(urlitem string) string {
 
 	items := strings.Split(res.Path, "/")
 	return items[len(items)-1]
+}
+
+//outpathResolver provides correct outpath for downloaded file
+//It's done for better view of the Download method
+func outpathResolver(path string, item *Options) (outpath string) {
+	if item != nil {
+		//Defeult value for outpath
+		outpath = item.Outpath
+
+		//Check if outpath is exist
+		if checkExist(item.Outpath) {
+			//Also, if we create new file, anyway
+			if item.Alwaysnew {
+				ext := filepath.Ext(item.Outpath)
+				//dupcount always returns non-zero value
+				dupcount := fileCount(item.Outpath)
+				newname := item.Outpath[0:len(item.Outpath)-len(ext)] +
+					fmt.Sprintf("_%d", dupcount+1)
+				if len(ext) > 0 {
+					newname = newname + ext
+				}
+				outpath = filepath.Dir(item.Outpath) + "/" + newname
+			} else if !item.Overwrite {
+				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
+			}
+		}
+	} else {
+		outpath = getFileNameFromUrl(path)
+		if checkExist(outpath) {
+			log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path))
+		}
+	}
+
+	return outpath
 }
