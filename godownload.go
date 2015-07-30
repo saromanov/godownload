@@ -58,6 +58,10 @@ func Download(path string, item *Options) {
 		}
 	}
 
+	if outpath == "" {
+		log.Fatal("Something wen wrong and outpath is empty")
+	}
+
 	obj := createTargetFile(outpath)
 	defer obj.Close()
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
