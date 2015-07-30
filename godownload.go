@@ -50,6 +50,8 @@ func Download(path string, item *Options) {
 			} else {
 				outpath = item.Outpath
 			}
+		} else {
+			outpath = item.Outpath
 		}
 	} else {
 		outpath = getFileNameFromUrl(path)
