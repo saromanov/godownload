@@ -43,6 +43,17 @@ func TestDownload(t *testing.T){
 	remove(t, path)
 }
 
+func TestDownloadAlwaysNew(t *testing.T) {
+	Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
+	Download("https://github.com/saromanov/godownload/archive/master.zip", &Options{
+		Outpath: "master.zip", Alwaysnew: true})
+	if !exist("master_2.zip") {
+		t.Fatal(fmt.Sprintf("Downloaded file %s not found", "master_2.zip"))
+	}
+	remove(t, "master.zip")
+	remove(t, "master_2.zip")
+}
+
 func TestDownloadMany (t *testing. T) {
 	path1 := "first.zip"
 	path2 := "second.zip"
