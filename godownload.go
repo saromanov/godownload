@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"io/ioutil"
+	"bytes"
 )
 
 type Options struct {
@@ -40,14 +42,14 @@ func Download(path string, item *Options) {
 		log.Fatal("Something wen wrong and outpath is empty")
 	}
 
-	obj := createTargetFile(outpath)
-	defer obj.Close()
+	createTargetFile(outpath)
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
 	starttime := time.Now()
 	resp := download(path)
 	defer resp.Body.Close()
-	copyToFile(resp, obj)
-	log.Printf(fmt.Sprintf("Finish to download from %s in %s", path, time.Since(starttime)))
+	transfered := copyToFile(resp, outpath)
+	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path, 
+		time.Since(starttime), transfered))
 }
 
 //DownloadMany provides downloading several files
@@ -86,13 +88,13 @@ func checkExist(path string) bool {
 	return true
 }
 
-func createTargetFile(path string) *os.File {
+func createTargetFile(path string){
 	res, err := os.Create(path)
 	if err != nil {
 		panic(err)
 	}
 
-	return res
+	defer res.Close()
 }
 
 func download(url string) *http.Response {
@@ -103,11 +105,20 @@ func download(url string) *http.Response {
 	return resp
 }
 
-func copyToFile(resp *http.Response, file *os.File) {
-	_, err := io.Copy(file, resp.Body)
+//copy to file 
+func copyToFile(resp *http.Response, outpath string)(int) {
+	dst := &bytes.Buffer{}
+
+	_, err := io.Copy(dst, resp.Body)
 	if err != nil {
 		panic(err)
 	}
+
+	errwrite := ioutil.WriteFile(outpath, dst.Bytes(), 0777)
+	if errwrite != nil {
+		log.Fatal(errwrite)
+	}
+	return dst.Len()
 }
 
 func getFileNameFromUrl(urlitem string) string {
