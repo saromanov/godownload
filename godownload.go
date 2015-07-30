@@ -37,11 +37,12 @@ func Download(path string, item *Options) {
 		if checkExist(item.Outpath) {
 			if item.Alwaysnew {
 				ext := filepath.Ext(item.Outpath)
+				fmt.Println(ext)
 				dupcount := fileCount(item.Outpath)
 				newname := item.Outpath[0: len(item.Outpath) - len(ext)] + 
 							fmt.Sprintf("_%d", dupcount+1)
 				if len(ext) > 0 {
-					newname = newname + "." + ext
+					newname = newname + ext
 				}
 				outpath = filepath.Dir(item.Outpath) + "/" + newname
 			} else if !item.Overwrite {
@@ -68,7 +69,7 @@ func Download(path string, item *Options) {
 
 //DownloadMany provides downloading several files
 func DownloadMany(items []*Options) {
-	runtime.GOMAXPROCS(2)
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	var wg sync.WaitGroup
 	for _, item := range items {
 		wg.Add(1)
