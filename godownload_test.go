@@ -90,4 +90,5 @@ func TestFromFile(t *testing.T) {
 
 	remove(t, path1)
 	remove(t, path2)
+	remove(t, "simple")
 }
