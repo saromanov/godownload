@@ -98,11 +98,17 @@ func createTargetFile(path string){
 }
 
 func download(url string) *http.Response {
-	resp, err := http.Get(url)
+	client := http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-	return resp
+
+	resp, err := client.Do(req)
+    if err != nil {
+          log.Fatal(err)
+    }
+    return resp
 }
 
 //copy to file 
