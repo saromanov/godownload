@@ -35,6 +35,7 @@ type Options struct {
 	//UserAgent provides setting user agent for http request
 	UserAgent string
 
+	//Retry provides number of attempts to download file
 	Retry int
 }
 
@@ -50,7 +51,10 @@ func Download(path string, item *Options) {
 	createTargetFile(outpath)
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
 	starttime := time.Now()
-	resp := download(path, item.UserAgent)
+	resp, err := downloadGeneral(item.Retry, path, item.UserAgent)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer resp.Body.Close()
 	transfered := copyToFile(resp, outpath)
 	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path,
@@ -102,11 +106,11 @@ func createTargetFile(path string) {
 	defer res.Close()
 }
 
-func download(url string, useragent string) *http.Response {
+func download(url string, useragent string) (*http.Response, error) {
 	client := http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	if useragent != "" {
@@ -114,9 +118,28 @@ func download(url string, useragent string) *http.Response {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	return resp
+	return resp, nil
+}
+
+func downloadGeneral(retry int, url, useragent string) (*http.Response, error) {
+	retrynums := 0
+	for {
+		res, err := download(url, useragent)
+		if err == nil {
+			return res, nil
+		} else if retry == 0 {
+			return nil, err
+		} else {
+			if retrynums == retry {
+				return nil, err
+			}
+		}
+		fmt.Println(fmt.Sprintf("Tried again to download from %s", url))
+		retrynums += 1
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 //copy to file
