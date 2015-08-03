@@ -52,9 +52,15 @@ func Download(path string, item *Options) {
 	}
 
 	createTargetFile(outpath)
+	retry := 0
+	useragent := ""
+	if item != nil {
+		retry = item.Retry
+		useragent = item.UserAgent
+	}
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
 	starttime := time.Now()
-	resp, err := downloadGeneral(item.Retry, path, item.UserAgent)
+	resp, err := downloadGeneral(retry, path, useragent)
 	if err != nil {
 		log.Fatal(err)
 	}
