@@ -31,6 +31,9 @@ type Options struct {
 	//Always create new file. If file with same name exist
 	// create "file_1"
 	Alwaysnew bool
+
+	//UserAgent provides setting user agent for http request
+	UserAgent string
 }
 
 //Downloading provides file downloading
@@ -45,7 +48,7 @@ func Download(path string, item *Options) {
 	createTargetFile(outpath)
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
 	starttime := time.Now()
-	resp := download(path)
+	resp := download(path, item.UserAgent)
 	defer resp.Body.Close()
 	transfered := copyToFile(resp, outpath)
 	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path, 
@@ -97,13 +100,16 @@ func createTargetFile(path string){
 	defer res.Close()
 }
 
-func download(url string) *http.Response {
+func download(url string, useragent string) *http.Response {
 	client := http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	if useragent != "" {
+		req.Header.Set("User-Agent", useragent)
+	}
 	resp, err := client.Do(req)
     if err != nil {
           log.Fatal(err)
