@@ -1,8 +1,10 @@
 package godownload
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -12,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"io/ioutil"
-	"bytes"
 )
 
 type Options struct {
@@ -34,6 +34,8 @@ type Options struct {
 
 	//UserAgent provides setting user agent for http request
 	UserAgent string
+
+	Retry int
 }
 
 //Downloading provides file downloading
@@ -51,7 +53,7 @@ func Download(path string, item *Options) {
 	resp := download(path, item.UserAgent)
 	defer resp.Body.Close()
 	transfered := copyToFile(resp, outpath)
-	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path, 
+	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path,
 		time.Since(starttime), transfered))
 }
 
@@ -91,7 +93,7 @@ func checkExist(path string) bool {
 	return true
 }
 
-func createTargetFile(path string){
+func createTargetFile(path string) {
 	res, err := os.Create(path)
 	if err != nil {
 		panic(err)
@@ -111,14 +113,14 @@ func download(url string, useragent string) *http.Response {
 		req.Header.Set("User-Agent", useragent)
 	}
 	resp, err := client.Do(req)
-    if err != nil {
-          log.Fatal(err)
-    }
-    return resp
+	if err != nil {
+		log.Fatal(err)
+	}
+	return resp
 }
 
-//copy to file 
-func copyToFile(resp *http.Response, outpath string)(int) {
+//copy to file
+func copyToFile(resp *http.Response, outpath string) int {
 	dst := &bytes.Buffer{}
 
 	_, err := io.Copy(dst, resp.Body)
