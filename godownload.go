@@ -37,6 +37,9 @@ type Options struct {
 
 	//Retry provides number of attempts to download file
 	Retry int
+
+	//TODO
+	TimeLimit time.Time
 }
 
 //Downloading provides file downloading
@@ -121,6 +124,15 @@ func download(url string, useragent string) (*http.Response, error) {
 		return nil, err
 	}
 	return resp, nil
+}
+
+func timer(num int) {
+	timer := time.NewTimer(time.Duration(num) * time.Second)
+	expired := make(chan bool)
+	go func() {
+		<-timer.C
+		expired <- true
+	}()
 }
 
 func downloadGeneral(retry int, url, useragent string) (*http.Response, error) {
