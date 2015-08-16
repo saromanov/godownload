@@ -1,6 +1,7 @@
 package godownload
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
 	"io"
@@ -42,7 +43,8 @@ type Options struct {
 	Auth string
 
 	//Specify archive format for downloaded file
-	Archive string 
+	Archive string
+
 	//TODO
 	TimeLimit time.Time
 }
@@ -73,6 +75,14 @@ func Download(path string, item *Options) {
 	transfered := copyToFile(resp, outpath)
 	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path,
 		time.Since(starttime), transfered))
+	if item.Archive == "zip" {
+		err := zipPack(outpath)
+		if err != nil {
+			log.Printf("Error to create zeip archive")
+			return
+		}
+		os.Remove(outpath)
+	}
 }
 
 //DownloadMany provides downloading several files
@@ -230,4 +240,39 @@ func outpathResolver(path string, item *Options) (outpath string) {
 	}
 
 	return outpath
+}
+
+
+//Pack output files to zip archive
+func zipPack(path string) error {
+	newfile, err := os.Create(path + ".zip")
+	if err != nil {
+		return err
+	}
+	defer newfile.Close()
+	zipit := zip.NewWriter(newfile)
+	defer zipit.Close()
+	zipfile, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer zipfile.Close()
+	// get the file information
+	info, err := zipfile.Stat()
+	if err != nil {
+		return err
+	}
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return err
+	}
+	header.Method = zip.Deflate
+
+	writer, err := zipit.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(writer, zipfile)
+	fmt.Println(fmt.Sprintf("Output as %s", path + ".zip"))
+	return err
 }
