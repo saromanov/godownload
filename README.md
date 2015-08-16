@@ -2,13 +2,13 @@
 
 Downloading files
 
-## Install
+### Install
 
 ``` 
 go get https://github.com/saromanov/godownload
 ```
 
-## Usage
+### Usage
 
 Download file
 
@@ -35,3 +35,11 @@ If you have a links on the file, you can download data by this links
 ```go
 download.FromFile("file")
 ```
+
+### API
+godownload.Options
+
+Url - Url parameter needs only for DownloadMany. In the case with Download. This paremeter will be ignore
+
+Outpath - Outpath sets the path of the downloaded file
+
