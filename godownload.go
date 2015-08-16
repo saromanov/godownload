@@ -50,8 +50,8 @@ type Options struct {
 }
 
 //Downloading provides file downloading
-func Download(path string, item *Options) {
-	outpath := outpathResolver(path, item)
+func Download(path string, opt *Options) {
+	outpath := outpathResolver(path, opt)
 
 	//Last chance to check if outpath is not empty
 	if outpath == "" {
@@ -61,13 +61,13 @@ func Download(path string, item *Options) {
 	createTargetFile(outpath)
 	retry := 0
 	useragent := ""
-	if item != nil {
-		retry = item.Retry
-		useragent = item.UserAgent
+	if opt != nil {
+		retry = opt.Retry
+		useragent = opt.UserAgent
 	}
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
 	starttime := time.Now()
-	resp, err := downloadGeneral(retry, path, useragent, item.Auth)
+	resp, err := downloadGeneral(retry, path, useragent, opt.Auth)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func Download(path string, item *Options) {
 	transfered := copyToFile(resp, outpath)
 	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path,
 		time.Since(starttime), transfered))
-	if item.Archive == "zip" {
+	if opt.Archive == "zip" {
 		err := zipPack(outpath)
 		if err != nil {
 			log.Printf("Error to create zeip archive")
@@ -257,7 +257,6 @@ func zipPack(path string) error {
 		return err
 	}
 	defer zipfile.Close()
-	// get the file information
 	info, err := zipfile.Stat()
 	if err != nil {
 		return err
