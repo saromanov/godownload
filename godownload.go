@@ -38,6 +38,8 @@ type Options struct {
 	//Retry provides number of attempts to download file
 	Retry int
 
+	//Authentication before downloading
+	Auth string
 	//TODO
 	TimeLimit time.Time
 }
@@ -60,7 +62,7 @@ func Download(path string, item *Options) {
 	}
 	log.Printf(fmt.Sprintf("Start to download from %s", path))
 	starttime := time.Now()
-	resp, err := downloadGeneral(retry, path, useragent)
+	resp, err := downloadGeneral(retry, path, useragent, item.Auth)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -115,13 +117,17 @@ func createTargetFile(path string) {
 	defer res.Close()
 }
 
-
 //Main inner method for downloading
-func download(url string, useragent string) (*http.Response, error) {
+func download(url, useragent, auth string) (*http.Response, error) {
 	client := http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if auth != "" {
+		res := strings.Split(auth, ":")
+		req.SetBasicAuth(res[0], res[1])
 	}
 
 	if useragent != "" {
@@ -134,7 +140,6 @@ func download(url string, useragent string) (*http.Response, error) {
 	return resp, nil
 }
 
-
 //Set timer for checking
 func timer(num int) {
 	timer := time.NewTimer(time.Duration(num) * time.Second)
@@ -145,10 +150,10 @@ func timer(num int) {
 	}()
 }
 
-func downloadGeneral(retry int, url, useragent string) (*http.Response, error) {
+func downloadGeneral(retry int, url, useragent, auth string) (*http.Response, error) {
 	retrynums := 0
 	for {
-		res, err := download(url, useragent)
+		res, err := download(url, useragent, auth)
 		if err == nil {
 			return res, nil
 		} else if retry == 0 {
