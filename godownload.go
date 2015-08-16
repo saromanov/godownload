@@ -115,6 +115,8 @@ func createTargetFile(path string) {
 	defer res.Close()
 }
 
+
+//Main inner method for downloading
 func download(url string, useragent string) (*http.Response, error) {
 	client := http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
@@ -132,6 +134,8 @@ func download(url string, useragent string) (*http.Response, error) {
 	return resp, nil
 }
 
+
+//Set timer for checking
 func timer(num int) {
 	timer := time.NewTimer(time.Duration(num) * time.Second)
 	expired := make(chan bool)
