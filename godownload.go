@@ -40,6 +40,9 @@ type Options struct {
 
 	//Authentication before downloading
 	Auth string
+
+	//Specify archive format for downloaded file
+	Archive string 
 	//TODO
 	TimeLimit time.Time
 }
