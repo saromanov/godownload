@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"errors"
 )
 
 type Options struct {
@@ -39,7 +40,7 @@ type Options struct {
 	//Retry provides number of attempts to download file
 	Retry int
 
-	//Authentication before downloading
+	//Authentication before downloading. Auth in the format username:password
 	Auth string
 
 	//Specify archive format for downloaded file
@@ -142,6 +143,9 @@ func download(url, useragent, auth string) (*http.Response, error) {
 
 	if auth != "" {
 		res := strings.Split(auth, ":")
+		if len(res) != 2 {
+			return nil, errors.New("Authentication must be in the format username:password")
+		}
 		req.SetBasicAuth(res[0], res[1])
 	}
 
