@@ -161,10 +161,10 @@ func download(url, useragent, auth string) (*http.Response, error) {
 
 //Set timer for checking
 func timer(num int) {
-	timer := time.NewTimer(time.Duration(num) * time.Second)
+	timer1 := time.NewTimer(time.Duration(num) * time.Second)
 	expired := make(chan bool)
 	go func() {
-		<-timer.C
+		<-timer1.C
 		expired <- true
 	}()
 }
