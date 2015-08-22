@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 	"errors"
+	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
@@ -48,10 +49,20 @@ type Options struct {
 
 	//TODO
 	TimeLimit time.Time
+
+	//Path to the config file
+	Configpath  string
 }
 
 //Downloading provides file downloading
 func Download(path string, opt *Options) {
+	if opt != nil && opt.Configpath != "" {
+		opta, err := loadConfig(opt.Configpath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opt = opta
+	}
 	outpath := outpathResolver(path, opt)
 
 	//Last chance to check if outpath is not empty
@@ -280,4 +291,18 @@ func zipPack(path string) error {
 	_, err = io.Copy(writer, zipfile)
 	fmt.Println(fmt.Sprintf("Output as %s", path + ".zip"))
 	return err
+}
+
+
+func loadConfig(path string)(*Options, error) {
+	var opt Options
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	errconf := yaml.Unmarshal([]byte(data), &opt)
+	if errconf != nil {
+		return nil, errconf
+	}
+	return &opt, nil
 }
