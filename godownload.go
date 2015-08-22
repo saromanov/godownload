@@ -294,6 +294,7 @@ func zipPack(path string) error {
 }
 
 
+//load config data from .yaml path
 func loadConfig(path string)(*Options, error) {
 	var opt Options
 	data, err := ioutil.ReadFile(path)
