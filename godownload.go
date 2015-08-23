@@ -40,6 +40,9 @@ type GoDownload struct {
 
 	//Specify archive format for downloaded file
 	Archive string
+
+	//Path to the config file
+	Configpath  string
 }
 
 
@@ -73,21 +76,20 @@ type Options struct {
 
 	//TODO
 	TimeLimit time.Time
-
-	//Path to the config file
-	Configpath  string
 }
 
 
 //Downloading provides file downloading
 func (gd*GoDownload) Download(path string, opt *Options) {
-	if opt != nil && opt.Configpath != "" {
-		opta, err := loadConfig(opt.Configpath)
+	fmt.Println(gd)
+	if gd.Configpath != "" {
+		opta, err := loadConfig(gd.Configpath)
 		if err != nil {
 			log.Fatal(err)
 		}
-		opt = opta
+		gd = opta
 	}
+	fmt.Println(gd)
 	outpath := outpathResolver(path, opt)
 
 	//Last chance to check if outpath is not empty
@@ -321,8 +323,8 @@ func zipPack(path string) error {
 
 
 //load config data from .yaml path
-func loadConfig(path string)(*Options, error) {
-	var opt Options
+func loadConfig(path string)(*GoDownload, error) {
+	var opt GoDownload
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
