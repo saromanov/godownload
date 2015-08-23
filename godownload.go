@@ -19,6 +19,30 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+//GoDownload provides main struct for global config and downloading items
+type GoDownload struct {
+
+	//Overwrite provides overwriting file with same name
+	Overwrite bool
+
+	//Always create new file. If file with same name exist
+	// create "file_1"
+	Alwaysnew bool
+
+	//UserAgent provides setting user agent for http request
+	UserAgent string
+
+	//Retry provides number of attempts to download file
+	Retry int
+
+	//Authentication before downloading. Auth in the format username:password
+	Auth string
+
+	//Specify archive format for downloaded file
+	Archive string
+}
+
+
 type Options struct {
 
 	// Url parameter needs only for DownloadMany.
@@ -53,6 +77,7 @@ type Options struct {
 	//Path to the config file
 	Configpath  string
 }
+
 
 //Downloading provides file downloading
 func Download(path string, opt *Options) {
