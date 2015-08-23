@@ -29,7 +29,7 @@ func hasURL(item string) bool {
 }
 
 //FromFile provides getting links from file and download
-func fromFile(path string) {
+func fromFile(path string) []string {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		panic(err)
@@ -55,5 +55,5 @@ func fromFile(path string) {
 	}
 	fmt.Println("\n")
 
-	DownloadManySimple(urls)
+	return urls
 }
