@@ -3,7 +3,9 @@ package godownload
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
+	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
 	"log"
@@ -15,8 +17,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"errors"
-	"gopkg.in/yaml.v2"
 )
 
 //GoDownload provides main struct for global config and downloading items
@@ -42,9 +42,8 @@ type GoDownload struct {
 	Archive string
 
 	//Path to the config file
-	Configpath  string
+	Configpath string
 }
-
 
 type Options struct {
 
@@ -78,10 +77,8 @@ type Options struct {
 	TimeLimit time.Time
 }
 
-
 //Downloading provides file downloading
-func (gd*GoDownload) Download(path string, opt *Options) {
-	fmt.Println(gd)
+func (gd *GoDownload) Download(path string, opt *Options) {
 	if gd.Configpath != "" {
 		opta, err := loadConfig(gd.Configpath)
 		if err != nil {
@@ -89,7 +86,18 @@ func (gd*GoDownload) Download(path string, opt *Options) {
 		}
 		gd = opta
 	}
-	fmt.Println(gd)
+
+	if opt == nil {
+		opt = &Options{
+			Overwrite: gd.Overwrite,
+			Alwaysnew: gd.Alwaysnew,
+			UserAgent: gd.UserAgent,
+			Retry:     gd.Retry,
+			Auth:      gd.Auth,
+			Archive:   gd.Archive,
+		}
+	}
+
 	outpath := outpathResolver(path, opt)
 
 	//Last chance to check if outpath is not empty
@@ -100,7 +108,7 @@ func (gd*GoDownload) Download(path string, opt *Options) {
 	createTargetFile(outpath)
 	retry := 0
 	useragent := ""
-	auth:=""
+	auth := ""
 	if opt != nil {
 		retry = opt.Retry
 		useragent = opt.UserAgent
@@ -127,7 +135,7 @@ func (gd*GoDownload) Download(path string, opt *Options) {
 }
 
 //DownloadMany provides downloading several files
-func (gd*GoDownload) DownloadMany(items []*Options) {
+func (gd *GoDownload) DownloadMany(items []*Options) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	var wg sync.WaitGroup
 	for _, item := range items {
@@ -141,7 +149,7 @@ func (gd*GoDownload) DownloadMany(items []*Options) {
 }
 
 //DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
-func (gd*GoDownload) DownloadManySimple(items []string) {
+func (gd *GoDownload) DownloadManySimple(items []string) {
 	result := []*Options{}
 	for _, item := range items {
 		result = append(result, &Options{Url: item, Outpath: getFileNameFromUrl(item)})
@@ -150,7 +158,7 @@ func (gd*GoDownload) DownloadManySimple(items []string) {
 }
 
 //FromFile provides getting links from file and download
-func (gd*GoDownload) FromFile(path string) {
+func (gd *GoDownload) FromFile(path string) {
 	urls := fromFile(path)
 	gd.DownloadManySimple(urls)
 }
@@ -257,7 +265,7 @@ func getFileNameFromUrl(urlitem string) string {
 //It's done for better view of the Download method
 func outpathResolver(path string, item *Options) (outpath string) {
 	if item != nil {
-		//Defeult value for outpath
+		//Default value for outpath
 		outpath = item.Outpath
 
 		//Check if outpath is exist
@@ -276,6 +284,11 @@ func outpathResolver(path string, item *Options) (outpath string) {
 			} else if !item.Overwrite {
 				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
 			}
+		} else {
+			outpath = getFileNameFromUrl(path)
+			if checkExist(outpath) {
+				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path))
+			}
 		}
 	} else {
 		outpath = getFileNameFromUrl(path)
@@ -286,7 +299,6 @@ func outpathResolver(path string, item *Options) (outpath string) {
 
 	return outpath
 }
-
 
 //Pack output files to zip archive
 func zipPack(path string) error {
@@ -317,13 +329,12 @@ func zipPack(path string) error {
 		return err
 	}
 	_, err = io.Copy(writer, zipfile)
-	fmt.Println(fmt.Sprintf("Output as %s", path + ".zip"))
+	fmt.Println(fmt.Sprintf("Output as %s", path+".zip"))
 	return err
 }
 
-
 //load config data from .yaml path
-func loadConfig(path string)(*GoDownload, error) {
+func loadConfig(path string) (*GoDownload, error) {
 	var opt GoDownload
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
