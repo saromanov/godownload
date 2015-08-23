@@ -80,7 +80,7 @@ type Options struct {
 
 
 //Downloading provides file downloading
-func Download(path string, opt *Options) {
+func (gd*GoDownload) Download(path string, opt *Options) {
 	if opt != nil && opt.Configpath != "" {
 		opta, err := loadConfig(opt.Configpath)
 		if err != nil {
@@ -125,13 +125,13 @@ func Download(path string, opt *Options) {
 }
 
 //DownloadMany provides downloading several files
-func DownloadMany(items []*Options) {
+func (gd*GoDownload) DownloadMany(items []*Options) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	var wg sync.WaitGroup
 	for _, item := range items {
 		wg.Add(1)
 		go func(it *Options) {
-			Download(it.Url, it)
+			gd.Download(it.Url, it)
 			wg.Done()
 		}(item)
 	}
@@ -139,17 +139,18 @@ func DownloadMany(items []*Options) {
 }
 
 //DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
-func DownloadManySimple(items []string) {
+func (gd*GoDownload) DownloadManySimple(items []string) {
 	result := []*Options{}
 	for _, item := range items {
 		result = append(result, &Options{Url: item, Outpath: getFileNameFromUrl(item)})
 	}
-	DownloadMany(result)
+	gd.DownloadMany(result)
 }
 
 //FromFile provides getting links from file and download
-func FromFile(path string) {
-	fromFile(path)
+func (gd*GoDownload) FromFile(path string) {
+	urls := fromFile(path)
+	gd.DownloadManySimple(urls)
 }
 
 func checkExist(path string) bool {
