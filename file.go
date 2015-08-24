@@ -36,7 +36,6 @@ func fromFile(path string) []string {
 	}
 
 	keyurls := map[string]bool{}
-	fmt.Println(string(data))
 	newdata := prepare(string(data))
 	for _, line := range strings.Split(newdata, "\n") {
 		for _, part := range strings.Split(line, " ") {
