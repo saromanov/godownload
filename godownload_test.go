@@ -36,7 +36,7 @@ func TestDownload(t *testing.T) {
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
 	path := "master.zip"
 	if !exist(path) {
-		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path))
+		t.Fatal(fmt.Sprintf("TestDownload. Downloaded file %s not found", path))
 	}
 	remove(t, path)
 }
@@ -47,7 +47,7 @@ func TestDownloadAlwaysNew(t *testing.T) {
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", &Options{
 		Outpath: "master.zip", Alwaysnew: true})
 	if !exist("master_2.zip") {
-		t.Fatal(fmt.Sprintf("Downloaded file %s not found", "master_2.zip"))
+		t.Fatal(fmt.Sprintf("TestDownloadAlwaysNew. Downloaded file %s not found", "master_2.zip"))
 	}
 	remove(t, "master.zip")
 	remove(t, "master_2.zip")
@@ -64,11 +64,11 @@ func TestDownloadMany(t *testing.T) {
 	gd := &GoDownload{}
 	gd.DownloadMany(items)
 	if !exist(path1) {
-		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path1))
+		t.Fatal(fmt.Sprintf("TestDownloadMany. Downloaded file %s not found", path1))
 	}
 
 	if !exist(path2) {
-		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path2))
+		t.Fatal(fmt.Sprintf("TestDownloadMany. Downloaded file %s not found", path2))
 	}
 
 	remove(t, path1)
@@ -83,14 +83,26 @@ func TestFromFile(t *testing.T) {
 	gd := &GoDownload{}
 	gd.FromFile("simple")
 	if !exist(path1) {
-		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path1))
+		t.Fatal(fmt.Sprintf("TestFromFile. Downloaded file %s not found", path1))
 	}
 
 	if !exist(path2) {
-		t.Fatal(fmt.Sprintf("Downloaded file %s not found", path2))
+		t.Fatal(fmt.Sprintf("TestFromFile. Downloaded file %s not found", path2))
 	}
 
 	remove(t, path1)
 	remove(t, path2)
 	remove(t, "simple")
+}
+
+func TestOverwriteGlobal(t *testing.T) {
+	gd := &GoDownload{Overwrite:true}
+	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
+	path := "master.zip"
+	if !exist(path) {
+		t.Fatal(fmt.Sprintf("TestOverwriteGlobal. Downloaded file %s not found", path))
+	}
+	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
+
+	remove(t, path)
 }
