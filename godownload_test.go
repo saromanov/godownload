@@ -106,3 +106,13 @@ func TestOverwriteGlobal(t *testing.T) {
 
 	remove(t, path)
 }
+
+func TestArchiveData(t *testing.T) {
+	gd := &GoDownload{Archive: "zip"}
+	gd.Download("http://arxiv.org/pdf/1206.5538v3.pdf", nil)
+	path := "1206.5538v3.pdf.zip"
+	if !exist(path) {
+		t.Fatal(fmt.Sprintf("TestArchiveData. Downloaded file %s not found", path))
+	}
+	remove(t, path)
+}
