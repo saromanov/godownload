@@ -43,6 +43,9 @@ type GoDownload struct {
 
 	//Path to the config file
 	Configpath string
+
+	//Directory for downloaded file
+	Outdir string
 }
 
 type Options struct {
@@ -96,6 +99,13 @@ func (gd *GoDownload) Download(path string, opt *Options) {
 			Auth:      gd.Auth,
 			Archive:   gd.Archive,
 		}
+	}
+
+	if gd.Outdir != "" {
+		createDir(gd.Outdir)
+		if opt.Outpath != "" {
+			opt.Outpath = fmt.Sprintf("%s/%s", gd.Outdir, opt.Outpath)
+		} 
 	}
 
 	outpath := outpathResolver(path, opt)
@@ -285,7 +295,15 @@ func outpathResolver(path string, item *Options) (outpath string) {
 				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
 			}
 		} else {
+			if item.Outpath != "" {
+				return outpath
+			}
+
 			outpath = getFileNameFromUrl(path)
+			if item.Overwrite {
+				return outpath
+			}
+
 			if checkExist(outpath) {
 				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path))
 			}
@@ -345,4 +363,12 @@ func loadConfig(path string) (*GoDownload, error) {
 		return nil, errconf
 	}
 	return &opt, nil
+}
+
+//create dir for downloading
+func createDir(dirname string) {
+	err := os.Mkdir(dirname,0777)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
