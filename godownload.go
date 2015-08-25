@@ -105,7 +105,7 @@ func (gd *GoDownload) Download(path string, opt *Options) {
 		createDir(gd.Outdir)
 		if opt.Outpath != "" {
 			opt.Outpath = fmt.Sprintf("%s/%s", gd.Outdir, opt.Outpath)
-		} 
+		}
 	}
 
 	outpath := outpathResolver(path, opt)
@@ -282,15 +282,15 @@ func outpathResolver(path string, item *Options) (outpath string) {
 		if checkExist(item.Outpath) {
 			//Also, if we create new file, anyway
 			if item.Alwaysnew {
-				ext := filepath.Ext(item.Outpath)
+				ext := filepath.Ext(outpath)
 				//dupcount always returns non-zero value
-				dupcount := fileCount(item.Outpath)
-				newname := item.Outpath[0:len(item.Outpath)-len(ext)] +
+				dupcount := fileCount(outpath)
+				newname := outpath[0:len(outpath)-len(ext)] +
 					fmt.Sprintf("_%d", dupcount+1)
 				if len(ext) > 0 {
 					newname = newname + ext
 				}
-				outpath = filepath.Dir(item.Outpath) + "/" + newname
+				outpath = filepath.Dir(outpath) + "/" + newname
 			} else if !item.Overwrite {
 				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
 			}
@@ -367,8 +367,12 @@ func loadConfig(path string) (*GoDownload, error) {
 
 //create dir for downloading
 func createDir(dirname string) {
-	err := os.Mkdir(dirname,0777)
-	if err != nil {
-		log.Fatal(err)
+	fmt.Println(dirname)
+	if _, err := os.Stat(dirname); os.IsNotExist(err) {
+		errmk := os.Mkdir(dirname, 0777)
+		if errmk != nil {
+			log.Fatal(errmk)
+		}
 	}
+	return
 }
