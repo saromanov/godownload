@@ -290,7 +290,12 @@ func outpathResolver(path string, item *Options) (outpath string) {
 				if len(ext) > 0 {
 					newname = newname + ext
 				}
-				outpath = filepath.Dir(outpath) + "/" + newname
+				if filepath.Dir(outpath) == "." {
+					outpath = filepath.Dir(outpath) + "/" + newname
+				} else {
+					outpath = newname
+				}
+				//outpath = filepath.Dir(outpath) + "/" + newname
 			} else if !item.Overwrite {
 				log.Fatal(fmt.Sprintf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath))
 			}
@@ -367,7 +372,6 @@ func loadConfig(path string) (*GoDownload, error) {
 
 //create dir for downloading
 func createDir(dirname string) {
-	fmt.Println(dirname)
 	if _, err := os.Stat(dirname); os.IsNotExist(err) {
 		errmk := os.Mkdir(dirname, 0777)
 		if errmk != nil {
