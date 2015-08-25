@@ -105,10 +105,13 @@ func (gd *GoDownload) Download(path string, opt *Options) {
 		createDir(gd.Outdir)
 		if opt.Outpath != "" {
 			opt.Outpath = fmt.Sprintf("%s/%s", gd.Outdir, opt.Outpath)
+		} else {
+			opt.Outpath = gd.Outdir
 		}
 	}
 
 	outpath := outpathResolver(path, opt)
+	fmt.Println(outpath)
 
 	//Last chance to check if outpath is not empty
 	if outpath == "" {
@@ -277,6 +280,7 @@ func outpathResolver(path string, item *Options) (outpath string) {
 	if item != nil {
 		//Default value for outpath
 		outpath = item.Outpath
+		fmt.Println("OUTPATH: ", path)
 
 		//Check if outpath is exist
 		if checkExist(item.Outpath) {
