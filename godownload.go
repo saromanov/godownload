@@ -105,7 +105,21 @@ func (gd *GoDownload) Download(path string, opt *Options) {
 	}
 
 	if opt.Page {
-		gd.pageDownload(path, opt)
+		result, err := gd.pageDownload(path, opt)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		createTargetFile(opt.Outpath)
+
+		starttime := time.Now()
+		errwrite := ioutil.WriteFile(opt.Outpath, []byte(result), 0777)
+		if errwrite != nil {
+			log.Fatal(errwrite)
+		}
+		log.Printf(fmt.Sprintf("Finish to download from %s in %s.", path,
+			time.Since(starttime)))
+
 	} else {
 		gd.fileDownload(path, opt)
 	}
@@ -175,7 +189,7 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) {
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
-	transfered := copyToFile(resp, outpath)
+	transfered := copyToFile(resp.Body, outpath)
 	log.Printf(fmt.Sprintf("Finish to download from %s in %s. Transfered bytes: %d", path,
 		time.Since(starttime), transfered))
 	if opt != nil && opt.Archive == "zip" {
@@ -188,7 +202,7 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) {
 	}
 }
 
-func (gd *GoDownload) pageDownload(path string, opt*Options)(string, error) {
+func (gd *GoDownload) pageDownload(path string, opt *Options) (string, error) {
 	if opt.Outpath != "" {
 		return "", errors.New("Outpath not specified")
 	}
@@ -200,13 +214,12 @@ func (gd *GoDownload) pageDownload(path string, opt*Options)(string, error) {
 
 	defer response.Body.Close()
 	contents, err := ioutil.ReadAll(response.Body)
-    if err != nil {
-    	return "", err
-    }
+	if err != nil {
+		return "", err
+	}
 
-    return string(contents), nil
+	return string(contents), nil
 }
-
 
 func checkExist(path string) bool {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -281,10 +294,10 @@ func downloadGeneral(retry int, url, useragent, auth string) (*http.Response, er
 }
 
 //copy to file
-func copyToFile(resp *http.Response, outpath string) int {
+func copyToFile(resp io.Reader, outpath string) int {
 	dst := &bytes.Buffer{}
 
-	_, err := io.Copy(dst, resp.Body)
+	_, err := io.Copy(dst, resp)
 	if err != nil {
 		panic(err)
 	}
