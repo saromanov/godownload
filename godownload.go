@@ -104,6 +104,44 @@ func (gd *GoDownload) Download(path string, opt *Options) {
 		}
 	}
 
+	if opt.Page {
+		gd.pageDownload(path, opt)
+	} else {
+		gd.fileDownload(path, opt)
+	}
+}
+
+//DownloadMany provides downloading several files
+func (gd *GoDownload) DownloadMany(items []*Options) {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	var wg sync.WaitGroup
+	for _, item := range items {
+		wg.Add(1)
+		go func(it *Options) {
+			gd.Download(it.Url, it)
+			wg.Done()
+		}(item)
+	}
+	wg.Wait()
+}
+
+//DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
+func (gd *GoDownload) DownloadManySimple(items []string) {
+	result := []*Options{}
+	for _, item := range items {
+		result = append(result, &Options{Url: item, Outpath: getFileNameFromUrl(item)})
+	}
+	gd.DownloadMany(result)
+}
+
+//FromFile provides getting links from file and download
+func (gd *GoDownload) FromFile(path string) {
+	urls := fromFile(path)
+	gd.DownloadManySimple(urls)
+}
+
+//fileDownload method provides downloading files
+func (gd *GoDownload) fileDownload(path string, opt *Options) {
 	if gd.Outdir != "" {
 		createDir(gd.Outdir)
 		if opt.Outpath != "" {
@@ -150,34 +188,25 @@ func (gd *GoDownload) Download(path string, opt *Options) {
 	}
 }
 
-//DownloadMany provides downloading several files
-func (gd *GoDownload) DownloadMany(items []*Options) {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	var wg sync.WaitGroup
-	for _, item := range items {
-		wg.Add(1)
-		go func(it *Options) {
-			gd.Download(it.Url, it)
-			wg.Done()
-		}(item)
+func (gd *GoDownload) pageDownload(path string, opt*Options)(string, error) {
+	if opt.Outpath != "" {
+		return "", errors.New("Outpath not specified")
 	}
-	wg.Wait()
+
+	response, err := http.Get(path)
+	if err != nil {
+		return "", err
+	}
+
+	defer response.Body.Close()
+	contents, err := ioutil.ReadAll(response.Body)
+    if err != nil {
+    	return "", err
+    }
+
+    return string(contents), nil
 }
 
-//DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
-func (gd *GoDownload) DownloadManySimple(items []string) {
-	result := []*Options{}
-	for _, item := range items {
-		result = append(result, &Options{Url: item, Outpath: getFileNameFromUrl(item)})
-	}
-	gd.DownloadMany(result)
-}
-
-//FromFile provides getting links from file and download
-func (gd *GoDownload) FromFile(path string) {
-	urls := fromFile(path)
-	gd.DownloadManySimple(urls)
-}
 
 func checkExist(path string) bool {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -294,7 +323,7 @@ func outpathResolver(path string, item *Options) (outpath string) {
 				if ext == "" {
 					name := getFileNameFromUrl(path)
 					outpath = outpath + "/" + name
-				} 
+				}
 				//dupcount always returns non-zero value
 				dupcount := fileCount(outpath)
 				newname := outpath[0:len(outpath)-len(ext)] +
