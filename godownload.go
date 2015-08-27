@@ -54,6 +54,9 @@ type Options struct {
 	// In the case with Download. This paremeter will be ignore
 	Url string
 
+	//Download web page instead file
+	Page bool
+
 	//Outpath sets the path of the downloaded file
 	Outpath string
 
