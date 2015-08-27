@@ -280,13 +280,18 @@ func outpathResolver(path string, item *Options) (outpath string) {
 	if item != nil {
 		//Default value for outpath
 		outpath = item.Outpath
-		fmt.Println("OUTPATH: ", path)
 
 		//Check if outpath is exist
 		if checkExist(item.Outpath) {
 			//Also, if we create new file, anyway
 			if item.Alwaysnew {
 				ext := filepath.Ext(outpath)
+
+				//In this case, outpath is directory
+				if ext == "" {
+					name := getFileNameFromUrl(path)
+					outpath = outpath + "/" + name
+				} 
 				//dupcount always returns non-zero value
 				dupcount := fileCount(outpath)
 				newname := outpath[0:len(outpath)-len(ext)] +
