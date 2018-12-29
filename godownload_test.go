@@ -45,7 +45,9 @@ func TestDownloadAlwaysNew(t *testing.T) {
 	gd := &GoDownload{}
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", &Options{
-		Outpath: masterZIP, Alwaysnew: true})
+		Outpath:   masterZIP,
+		Alwaysnew: true,
+	})
 	if !exist("master_2.zip") {
 		t.Fatal(fmt.Sprintf("TestDownloadAlwaysNew. Downloaded file %s not found", "master_2.zip"))
 	}

@@ -49,6 +49,7 @@ type GoDownload struct {
 	Outdir string
 }
 
+// Options defines attributes for config of GoDownload
 type Options struct {
 
 	// URL parameter needs only for DownloadMany.
@@ -84,7 +85,7 @@ type Options struct {
 	TimeLimit time.Time
 }
 
-//Downloading provides file downloading
+// Download provides downloading of file
 func (gd *GoDownload) Download(path string, opt *Options) {
 	if gd.Configpath != "" {
 		opta, err := loadConfig(gd.Configpath)
@@ -190,9 +191,9 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) {
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
-	transfered := copyToFile(resp.Body, outpath)
-	log.Printf("Finish to download from %s in %s. Transfered bytes: %d", path,
-		time.Since(starttime), transfered)
+	transferred := copyToFile(resp.Body, outpath)
+	log.Printf("Finish to download from %s in %s. Transferred bytes: %d", path,
+		time.Since(starttime), transferred)
 	if opt != nil && opt.Archive == "zip" {
 		err := zipPack(outpath)
 		if err != nil {
