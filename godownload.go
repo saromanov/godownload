@@ -265,28 +265,16 @@ func download(url, useragent, auth string) (*http.Response, error) {
 	return resp, nil
 }
 
-//Set timer for checking
-func timer(num int) {
-	timer1 := time.NewTimer(time.Duration(num) * time.Second)
-	expired := make(chan bool)
-	go func() {
-		<-timer1.C
-		expired <- true
-	}()
-}
-
 func downloadGeneral(retry int, url, useragent, auth string) (*http.Response, error) {
 	retrynums := 0
 	for {
 		res, err := download(url, useragent, auth)
-		if err == nil {
-			return res, nil
-		} else if retry == 0 {
-			return nil, err
-		} else {
-			if retrynums == retry {
+		if err != nil {
+			if retry == 0 || retrynums == retry {
 				return nil, err
 			}
+		} else {
+			return res, nil
 		}
 		fmt.Printf("Tried again to download from %s\n", url)
 		retrynums++
@@ -346,7 +334,7 @@ func outpathResolver(path string, item *Options) (outpath string) {
 			newname := outpath[0:len(outpath)-len(ext)] +
 				fmt.Sprintf("_%d", dupcount+1)
 			if len(ext) > 0 {
-				newname = newname + ext
+				newname += ext
 			}
 			if filepath.Dir(outpath) == "." {
 				outpath = filepath.Dir(outpath) + "/" + newname
@@ -357,15 +345,7 @@ func outpathResolver(path string, item *Options) (outpath string) {
 			log.Fatalf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath)
 		}
 	} else {
-		if item.Outpath != "" {
-			return outpath
-		}
-
 		outpath = getFileNameFromURL(path)
-		if item.Overwrite {
-			return outpath
-		}
-
 		if checkExist(outpath) {
 			log.Fatalf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path)
 		}
