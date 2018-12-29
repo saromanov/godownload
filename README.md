@@ -1,4 +1,5 @@
 # godownload 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/dcf78b0a09b4460ab21a338f9165d0d8)](https://app.codacy.com/app/saromanov/godownload?utm_source=github.com&utm_medium=referral&utm_content=saromanov/godownload&utm_campaign=Badge_Grade_Dashboard)
 [![Build Status](https://travis-ci.org/saromanov/godownload.svg?branch=master)](https://travis-ci.org/saromanov/godownload)
 [![Go Report Card](https://goreportcard.com/badge/github.com/saromanov/godownload)](https://goreportcard.com/report/github.com/saromanov/godownload)
 
