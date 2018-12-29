@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-//http://www.gnu.org/software/wget/manual/wget.html
+const masterZIP = "master.zip"
 
 func exist(path string) bool {
 	return checkExist(path)
@@ -34,7 +34,7 @@ func createFileWithLinks(filename string) {
 func TestDownload(t *testing.T) {
 	gd := &GoDownload{}
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
-	path := "master.zip"
+	path := masterZIP
 	if !exist(path) {
 		t.Fatal(fmt.Sprintf("TestDownload. Downloaded file %s not found", path))
 	}
@@ -45,11 +45,11 @@ func TestDownloadAlwaysNew(t *testing.T) {
 	gd := &GoDownload{}
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", &Options{
-		Outpath: "master.zip", Alwaysnew: true})
+		Outpath: masterZIP, Alwaysnew: true})
 	if !exist("master_2.zip") {
 		t.Fatal(fmt.Sprintf("TestDownloadAlwaysNew. Downloaded file %s not found", "master_2.zip"))
 	}
-	remove(t, "master.zip")
+	remove(t, masterZIP)
 	remove(t, "master_2.zip")
 }
 
@@ -57,8 +57,14 @@ func TestDownloadMany(t *testing.T) {
 	path1 := "first.zip"
 	path2 := "second.zip"
 	items := []*Options{
-		&Options{Url: "https://github.com/saromanov/godownload/archive/master.zip", Outpath: "first.zip"},
-		&Options{Url: "http://arxiv.org/pdf/1206.5538v3.pdf", Outpath: "second.zip"},
+		&Options{
+			URL:     "https://github.com/saromanov/godownload/archive/master.zip",
+			Outpath: "first.zip",
+		},
+		&Options{
+			URL:     "http://arxiv.org/pdf/1206.5538v3.pdf",
+			Outpath: "second.zip",
+		},
 	}
 
 	gd := &GoDownload{}
@@ -76,7 +82,7 @@ func TestDownloadMany(t *testing.T) {
 }
 
 func TestFromFile(t *testing.T) {
-	path1 := "master.zip"
+	path1 := masterZIP
 	path2 := "1206.5538v3.pdf"
 	createFileWithLinks("simple")
 
@@ -96,9 +102,9 @@ func TestFromFile(t *testing.T) {
 }
 
 func TestOverwriteGlobal(t *testing.T) {
-	gd := &GoDownload{Overwrite:true}
+	gd := &GoDownload{Overwrite: true}
 	gd.Download("https://github.com/saromanov/godownload/archive/master.zip", nil)
-	path := "master.zip"
+	path := masterZIP
 	if !exist(path) {
 		t.Fatal(fmt.Sprintf("TestOverwriteGlobal. Downloaded file %s not found", path))
 	}

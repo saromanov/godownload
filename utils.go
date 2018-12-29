@@ -23,7 +23,7 @@ func fileCount(path string) int {
 	}
 	currentname := filepath.Base(path)
 	ext := filepath.Ext(currentname)
-	currentname = currentname[0:len(currentname)-len(ext)]
+	currentname = currentname[0 : len(currentname)-len(ext)]
 	pattern := fmt.Sprintf("%s_*", currentname)
 	if ext != "" {
 		pattern = fmt.Sprintf("%s_*%s", currentname, ext)
@@ -32,7 +32,7 @@ func fileCount(path string) int {
 	for _, item := range dirdata {
 		ok, _ := filepath.Match(pattern, item.Name())
 		if ok {
-			count += 1
+			count++
 		}
 	}
 	return count + 1
