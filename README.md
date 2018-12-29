@@ -1,4 +1,5 @@
 # godownload [![Build Status](https://travis-ci.org/saromanov/godownload.svg?branch=master)](https://travis-ci.org/saromanov/godownload)
+[![Go Report Card](https://goreportcard.com/badge/github.com/saromanov/godownload)](https://goreportcard.com/report/github.com/saromanov/godownload)
 
 Downloading files
 
@@ -14,10 +15,7 @@ Download file
 
 ```go
 package main
-import
-(
-	"github.com/saromanov/godownload"
-)
+import "github.com/saromanov/godownload"
 
 func main() { 
     godownload.Download("http://arxiv.org/pdf/1206.5538v3.pdf", nil)
