@@ -450,6 +450,7 @@ func TestResumeFromPartFile(t *testing.T) {
 	if err := gd.Download(srv.URL, &Options{Outpath: "resume.txt"}); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Remove("resume.txt") })
 
 	if rangeHeader == "" || rangeHeader != fmt.Sprintf("bytes=%d-", half) {
 		t.Fatalf("expected Range header bytes=%d-, got %q", half, rangeHeader)
@@ -480,6 +481,7 @@ func TestResumeNoServerSupport(t *testing.T) {
 	if err := gd.Download(srv.URL+"/noresume.txt", &Options{Outpath: "noresume.txt"}); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Remove("noresume.txt") })
 
 	data, err := os.ReadFile("noresume.txt")
 	if err != nil {
@@ -491,6 +493,80 @@ func TestResumeNoServerSupport(t *testing.T) {
 	if exist("noresume.txt.part") {
 		t.Fatal(".part file should be renamed after restart")
 	}
+}
+
+func TestProgressCallback(t *testing.T) {
+	// 1 MiB body so the callback fires multiple times
+	body := strings.Repeat("x", 1024*1024)
+	// Explicit Content-Length, otherwise net/http serves it chunked
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		_, _ = fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+
+	var mu sync.Mutex
+	var last int64
+	calls := 0
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath: "progress.bin",
+		OnProgress: func(transferred, total int64) {
+			mu.Lock()
+			defer mu.Unlock()
+			last = transferred
+			calls++
+			if total != int64(len(body)) {
+				t.Errorf("unexpected total: %d", total)
+			}
+		},
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls == 0 {
+		t.Fatal("progress callback was not called")
+	}
+	if last != int64(len(body)) {
+		t.Fatalf("last progress %d, want %d", last, len(body))
+	}
+	remove(t, "progress.bin")
+}
+
+func TestProgressUnknownTotal(t *testing.T) {
+	// Response without Content-Length: total must be reported as 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		// Write more than the buffer size in small chunks with flushes,
+		// so net/http switches to chunked transfer encoding
+		for i := 0; i < 3; i++ {
+			_, _ = fmt.Fprint(w, strings.Repeat("x", 4096))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var total int64
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath: "progress_unknown.bin",
+		OnProgress: func(transferred, tot int64) {
+			total = tot
+		},
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	if total != 0 {
+		t.Fatalf("expected total 0 for unknown size, got %d", total)
+	}
+	remove(t, "progress_unknown.bin")
 }
 
 func exist(path string) bool {

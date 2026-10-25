@@ -30,6 +30,39 @@ const defaultRetryPause = 100 * time.Millisecond
 // is in progress (atomic writes)
 const partSuffix = ".part"
 
+// progressUpdateInterval defines how often the progress callback fires
+const progressUpdateInterval = 64 * 1024
+
+// progressReader wraps a reader and calls the progress callback
+// every progressUpdateInterval bytes and once at EOF
+type progressReader struct {
+	r           io.Reader
+	onProgress  func(transferred, total int64)
+	total       int64
+	transferred int64
+	sinceNotify int64
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.transferred += int64(n)
+		p.sinceNotify += int64(n)
+		if p.sinceNotify >= progressUpdateInterval || err != nil {
+			p.onProgress(p.transferred, max64(p.total, 0))
+			p.sinceNotify = 0
+		}
+	}
+	return n, err
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // ErrEmptyOutpath — ошибка, когда для скачивания страницы не задан путь вывода.
 var ErrEmptyOutpath = errors.New("outpath is not specified")
 
@@ -61,6 +94,13 @@ type GoDownload struct {
 	//Specify archive format for downloaded file.
 	// Supported values: "zip"
 	Archive string
+
+	//OnProgress is called periodically during the download with
+	// the number of bytes transferred so far and the total size
+	// (0 if the total size is unknown, e.g. chunked responses).
+	// Called from the download goroutine; must be cheap or spawn
+	// its own goroutine
+	OnProgress func(transferred, total int64)
 
 	//Path to the config file
 	Configpath string
@@ -116,6 +156,13 @@ type Options struct {
 	//Specify archive format for downloaded file.
 	// Supported values: "zip"
 	Archive string
+
+	//OnProgress is called periodically during the download with
+	// the number of bytes transferred so far and the total size
+	// (0 if the total size is unknown, e.g. chunked responses).
+	// Called from the download goroutine; must be cheap or spawn
+	// its own goroutine
+	OnProgress func(transferred, total int64)
 }
 
 // Download provides downloading of file from path.
@@ -131,12 +178,13 @@ func (gd *GoDownload) Download(path string, opt *Options) error {
 
 	if opt == nil {
 		opt = &Options{
-			Overwrite: gd.Overwrite,
-			Alwaysnew: gd.Alwaysnew,
-			UserAgent: gd.UserAgent,
-			Retry:     gd.Retry,
-			Auth:      gd.Auth,
-			Archive:   gd.Archive,
+			Overwrite:  gd.Overwrite,
+			Alwaysnew:  gd.Alwaysnew,
+			UserAgent:  gd.UserAgent,
+			Retry:      gd.Retry,
+			Auth:       gd.Auth,
+			Archive:    gd.Archive,
+			OnProgress: gd.OnProgress,
 		}
 	}
 
@@ -275,7 +323,17 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 		rangeset = nil
 	}
 
-	transferred, err := gd.downloadToFile(resp.Body, outpath, rangeset)
+	body := io.Reader(resp.Body)
+	if opt != nil && opt.OnProgress != nil {
+		// ContentLength is -1 when the size is unknown (chunked responses)
+		total := resp.ContentLength
+		if total < 0 {
+			total = 0
+		}
+		body = &progressReader{r: resp.Body, onProgress: opt.OnProgress, total: total}
+	}
+
+	transferred, err := gd.downloadToFile(body, outpath, rangeset)
 	if err != nil {
 		return err
 	}
