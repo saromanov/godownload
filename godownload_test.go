@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const testBody = "hello world"
@@ -640,6 +641,39 @@ func TestChecksumBadFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unsupported checksum format")
 	}
+}
+
+func TestRateLimit(t *testing.T) {
+	body := strings.Repeat("x", 128*1024)
+	srv := newTestServer(t, http.StatusOK, body)
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:   "ratelimit.bin",
+		RateLimit: 32 * 1024, // 32 KiB/s
+		Overwrite: true,
+	}
+	start := time.Now()
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(start)
+	// 128 KiB at 32 KiB/s should take at least ~3.5s (allowing scheduling slack)
+	if elapsed < 3500*time.Millisecond {
+		t.Fatalf("download too fast for rate limit: %v", elapsed)
+	}
+	// And not absurdly slow (upper sanity bound)
+	if elapsed > 30*time.Second {
+		t.Fatalf("download too slow: %v", elapsed)
+	}
+	data, err := os.ReadFile("ratelimit.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != len(body) {
+		t.Fatalf("content mismatch: got %d bytes", len(data))
+	}
+	remove(t, "ratelimit.bin")
 }
 
 func exist(path string) bool {
