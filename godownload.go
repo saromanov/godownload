@@ -68,6 +68,52 @@ func max64(a, b int64) int64 {
 	return b
 }
 
+// rateLimitedReader caps the read speed at bps bytes per second
+// with a token-bucket that refills continuously
+type rateLimitedReader struct {
+	r      io.Reader
+	bps    int64
+	tokens float64
+	last   time.Time
+	init   bool
+}
+
+func (r *rateLimitedReader) Read(b []byte) (int, error) {
+	if !r.init {
+		r.last = time.Now()
+		r.tokens = float64(r.bps) / 10 // small initial burst
+		r.init = true
+	}
+	if len(b) == 0 {
+		return 0, nil
+	}
+	// Cap the chunk size for smooth pacing
+	maxchunk := r.bps / 10
+	if maxchunk < 1 {
+		maxchunk = 1
+	}
+	want := int64(len(b))
+	if want > maxchunk {
+		want = maxchunk
+	}
+
+	for {
+		now := time.Now()
+		r.tokens += now.Sub(r.last).Seconds() * float64(r.bps)
+		r.last = now
+		if r.tokens > float64(r.bps) {
+			r.tokens = float64(r.bps)
+		}
+		if r.tokens >= float64(want) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.tokens -= float64(want)
+
+	return r.r.Read(b[:want])
+}
+
 // ErrEmptyOutpath — ошибка, когда для скачивания страницы не задан путь вывода.
 var ErrEmptyOutpath = errors.New("outpath is not specified")
 
@@ -112,6 +158,10 @@ type GoDownload struct {
 	// sha256, sha512. Example: "sha256:abc123..."
 	// An empty value disables verification
 	Checksum string
+
+	//RateLimit caps the download speed in bytes per second.
+	// Zero means unlimited
+	RateLimit int64
 
 	//Path to the config file
 	Configpath string
@@ -180,6 +230,10 @@ type Options struct {
 	// sha256, sha512. Example: "sha256:abc123..."
 	// An empty value disables verification
 	Checksum string
+
+	//RateLimit caps the download speed in bytes per second.
+	// Zero means unlimited
+	RateLimit int64
 }
 
 // Download provides downloading of file from path.
@@ -203,6 +257,7 @@ func (gd *GoDownload) Download(path string, opt *Options) error {
 			Archive:    gd.Archive,
 			OnProgress: gd.OnProgress,
 			Checksum:   gd.Checksum,
+			RateLimit:  gd.RateLimit,
 		}
 	}
 
@@ -342,13 +397,16 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 	}
 
 	body := io.Reader(resp.Body)
+	if opt != nil && opt.RateLimit > 0 {
+		body = &rateLimitedReader{r: body, bps: opt.RateLimit}
+	}
 	if opt != nil && opt.OnProgress != nil {
 		// ContentLength is -1 when the size is unknown (chunked responses)
 		total := resp.ContentLength
 		if total < 0 {
 			total = 0
 		}
-		body = &progressReader{r: resp.Body, onProgress: opt.OnProgress, total: total}
+		body = &progressReader{r: body, onProgress: opt.OnProgress, total: total}
 	}
 
 	transferred, err := gd.downloadToFile(body, outpath, rangeset, opt.Checksum)
