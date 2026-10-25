@@ -97,3 +97,48 @@ err := gd.Download("https://example.com/file.zip", &godownload.Options{Retry: 3}
 Все методы возвращают `error`. Специфические ошибки: `ErrFileExists`, `ErrUnsupportedArchive`.
 
 > **v2.0:** методы больше не завершают процесс через `log.Fatal`/`panic` и возвращают `error`. Это несовместимое изменение по сравнению с v1.
+
+## Reliability features
+
+Atomic writes, resume and checksum verification are always on for file downloads
+(`Options.Checksum` is opt-in):
+
+- The file lands under its final name only after a successful write (atomic rename from `file.part`)
+- Interrupted downloads resume via `Range` requests (`file.part` is kept on failure)
+- `ErrFileExists`, `ErrChecksumMismatch`, `ErrUnsupportedArchive` are checkable with `errors.Is`
+
+Progress and throttling:
+
+```go
+gd := godownload.GoDownload{Timeout: 30 * time.Second}
+err := gd.Download("https://example.com/big.iso", &godownload.Options{
+    Outpath:   "big.iso",
+    Segments:  8,                // parallel ranged segments
+    RateLimit: 10 * 1024 * 1024, // 10 MiB/s
+    Checksum:  "sha256:...",     // verify before the file becomes visible
+    OnProgress: func(transferred, total int64) {
+        fmt.Printf("\r%d / %d", transferred, total)
+    },
+})
+```
+
+Declarative downloads from a YAML manifest with mirrors:
+
+```yaml
+- url: https://example.com/model.bin
+  out: model.bin
+  checksum: sha256:b5bb9d80...
+  segments: 8
+  mirrors:
+    - https://mirror.example.com/model.bin
+- url: https://example.com/data.csv
+  out: data.csv
+  retry: 5
+```
+
+```go
+gd := godownload.GoDownload{}
+if err := gd.FromManifest("downloads.yaml"); err != nil {
+    // ...
+}
+```

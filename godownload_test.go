@@ -826,6 +826,105 @@ func TestMultiSegmentResume(t *testing.T) {
 	remove(t, "mresume.bin")
 }
 
+func TestFromManifest(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	manifest := fmt.Sprintf(`
+- url: %s/first.bin
+  out: first.bin
+  checksum: sha256:%x
+- url: %s/second.bin
+  out: second.bin
+  retry: 2
+  rate_limit: 1048576
+`, srv.URL, sha256.Sum256([]byte(testBody)), srv.URL)
+
+	if err := os.WriteFile("manifest.yaml", []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove("manifest.yaml") })
+	t.Cleanup(func() { _ = os.Remove("first.bin") })
+	t.Cleanup(func() { _ = os.Remove("second.bin") })
+
+	gd := &GoDownload{Quiet: true}
+	if err := gd.FromManifest("manifest.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("first.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != testBody {
+		t.Fatal("content mismatch in manifest download")
+	}
+	if !exist("second.bin") {
+		t.Fatal("second manifest item not downloaded")
+	}
+}
+
+func TestFromManifestInvalid(t *testing.T) {
+	if err := os.WriteFile("empty_manifest.yaml", []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove("empty_manifest.yaml") })
+
+	gd := &GoDownload{Quiet: true}
+	if err := gd.FromManifest("empty_manifest.yaml"); err == nil {
+		t.Fatal("expected error for empty manifest")
+	}
+
+	bad := "- out: no-url.yaml"
+	if err := os.WriteFile("bad_manifest.yaml", []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove("bad_manifest.yaml") })
+	if err := gd.FromManifest("bad_manifest.yaml"); err == nil {
+		t.Fatal("expected error for item without url")
+	}
+}
+
+func TestMirrors(t *testing.T) {
+	// Primary URL fails, mirror works
+	bad := newTestServer(t, http.StatusInternalServerError, "oops")
+	good := newTestServer(t, http.StatusOK, testBody)
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath: "mirror.txt",
+		mirrors: []string{good.URL + "/mirror.txt"},
+	}
+	if err := gd.Download(bad.URL+"/primary.txt", opts); err != nil {
+		t.Fatalf("expected mirror to succeed: %v", err)
+	}
+	data, err := os.ReadFile("mirror.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != testBody {
+		t.Fatal("content mismatch from mirror")
+	}
+	remove(t, "mirror.txt")
+}
+
+func TestMirrorsAllFail(t *testing.T) {
+	bad1 := newTestServer(t, http.StatusInternalServerError, "oops1")
+	bad2 := newTestServer(t, http.StatusNotFound, "oops2")
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath: "mirror_fail.txt",
+		mirrors: []string{bad2.URL + "/mirror.txt"},
+	}
+	err := gd.Download(bad1.URL+"/primary.txt", opts)
+	if err == nil {
+		t.Fatal("expected error when all mirrors fail")
+	}
+	if exist("mirror_fail.txt") {
+		t.Fatal("no file should be created when all mirrors fail")
+	}
+	_ = bad1
+	_ = bad2
+}
+
 func exist(path string) bool {
 	return checkExist(path)
 }
