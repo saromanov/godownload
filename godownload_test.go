@@ -354,6 +354,63 @@ func TestNextFreeName(t *testing.T) {
 	remove(t, "nf.txt")
 }
 
+func TestAtomicWriteSuccess(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	gd := &GoDownload{Quiet: true}
+	if err := gd.Download(srv.URL+"/atomic.txt", &Options{Outpath: "atomic.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if exist("atomic.txt.part") {
+		t.Fatal("temp .part file should be renamed after successful download")
+	}
+	data, err := os.ReadFile("atomic.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != testBody {
+		t.Fatalf("unexpected body: %q", data)
+	}
+	remove(t, "atomic.txt")
+}
+
+func TestAtomicWriteFailureKeepsTarget(t *testing.T) {
+	// Target file with previous content
+	prev := "previous content"
+	if err := os.WriteFile("atomic_fail.txt", []byte(prev), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Server that breaks the connection in the middle of the body
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "short")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Panic triggers the connection close without completing the body
+		panic(http.ErrAbortHandler)
+	}))
+	t.Cleanup(srv.Close)
+
+	gd := &GoDownload{Quiet: true}
+	if err := gd.Download(srv.URL, &Options{Outpath: "atomic_fail.txt", Overwrite: true}); err == nil {
+		t.Fatal("expected error on aborted download")
+	}
+
+	data, err := os.ReadFile("atomic_fail.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != prev {
+		t.Fatalf("target file was modified on failed download: %q", data)
+	}
+	if exist("atomic_fail.txt.part") {
+		t.Fatal("temp .part file should be removed on failure")
+	}
+	remove(t, "atomic_fail.txt")
+}
+
 func exist(path string) bool {
 	return checkExist(path)
 }
