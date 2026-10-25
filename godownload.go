@@ -225,7 +225,7 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 		return err
 	}
 	if gd.Outdir != "" {
-		// Файл кладём в Outdir, сохраняя имя файла из outpath
+		// The file goes to Outdir keeping the base name from outpath
 		outpath = filepath.Join(gd.Outdir, filepath.Base(outpath))
 		opt.Outpath = outpath
 	}
@@ -243,7 +243,18 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 
 	gd.logf("Start to download from %s", path)
 	starttime := time.Now()
-	resp, err := downloadGeneral(gd.client(), retry, path, useragent, auth)
+
+	// If a temp file from a previous interrupted download exists,
+	// try to resume it with a Range request
+	partpath := outpath + partSuffix
+	var rangeset *int64
+	if info, err := os.Stat(partpath); err == nil && !opt.Page {
+		offset := info.Size()
+		rangeset = &offset
+		gd.logf("Resuming download of %s from byte %d", path, offset)
+	}
+
+	resp, err := downloadGeneral(gd.client(), retry, path, useragent, auth, rangeset)
 	if err != nil {
 		return err
 	}
@@ -257,7 +268,14 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 		return err
 	}
 
-	transferred, err := gd.downloadToFile(resp.Body, outpath)
+	// Server ignored the Range request and returned the full body:
+	// start over from scratch
+	if rangeset != nil && resp.StatusCode != http.StatusPartialContent {
+		gd.logf("Server %s does not support resume, starting over", path)
+		rangeset = nil
+	}
+
+	transferred, err := gd.downloadToFile(resp.Body, outpath, rangeset)
 	if err != nil {
 		return err
 	}
@@ -278,10 +296,18 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 // downloadToFile writes the response body to outpath atomically:
 // data goes to a temporary ".part" file which is renamed to the
 // final name only after a successful write. On any failure the
-// target file is left untouched and the temp file is removed
-func (gd *GoDownload) downloadToFile(resp io.Reader, outpath string) (int64, error) {
+// target file is left untouched and the temp file is removed.
+// If offset is not nil, the body continues an interrupted download
+// and the temp file is appended to instead of being truncated
+func (gd *GoDownload) downloadToFile(resp io.Reader, outpath string, offset *int64) (int64, error) {
 	partpath := outpath + partSuffix
-	f, err := os.OpenFile(partpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	flags := os.O_WRONLY | os.O_CREATE
+	if offset != nil {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+	f, err := os.OpenFile(partpath, flags, 0o644)
 	if err != nil {
 		return 0, fmt.Errorf("opening temp file: %w", err)
 	}
@@ -289,7 +315,7 @@ func (gd *GoDownload) downloadToFile(resp io.Reader, outpath string) (int64, err
 	n, copyErr := io.Copy(f, resp)
 	closeErr := f.Close()
 	if copyErr != nil {
-		_ = os.Remove(partpath)
+		// Keep the temp file: a subsequent download can resume from it
 		return n, fmt.Errorf("copying response body: %w", copyErr)
 	}
 	if closeErr != nil {
@@ -348,7 +374,7 @@ func (gd *GoDownload) logf(format string, args ...any) {
 	logger.Printf(format, args...)
 }
 
-// drainBody дочитывает и закрывает тело ответа
+// drainBody drains and closes the response body
 func drainBody(body io.ReadCloser) {
 	_, _ = io.Copy(io.Discard, body)
 	_ = body.Close()
@@ -364,12 +390,14 @@ func checkStatusCode(resp *http.Response, path string) error {
 }
 
 // Main inner method for downloading with retries and exponential backoff.
-// Retries happen on transport errors and on 5xx responses
-func downloadGeneral(client *http.Client, retry int, url, useragent, auth string) (*http.Response, error) {
+// Retries happen on transport errors and on 5xx responses.
+// If rangeset is not nil, a Range header is sent and a 206 response
+// is expected from servers that support resumable downloads
+func downloadGeneral(client *http.Client, retry int, url, useragent, auth string, rangeset *int64) (*http.Response, error) {
 	retrynums := 0
 	pause := defaultRetryPause
 	for {
-		res, err := download(client, url, useragent, auth)
+		res, err := download(client, url, useragent, auth, rangeset)
 		if err == nil {
 			if res.StatusCode >= 500 && res.StatusCode < 600 {
 				drainBody(res.Body)
@@ -395,13 +423,17 @@ func downloadGeneral(client *http.Client, retry int, url, useragent, auth string
 }
 
 // download performs a single GET request
-func download(client *http.Client, url, useragent, auth string) (*http.Response, error) {
+func download(client *http.Client, url, useragent, auth string, rangeset *int64) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	if rangeset != nil {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", *rangeset))
 	}
 
 	if auth != "" {

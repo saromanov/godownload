@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -405,10 +406,91 @@ func TestAtomicWriteFailureKeepsTarget(t *testing.T) {
 	if string(data) != prev {
 		t.Fatalf("target file was modified on failed download: %q", data)
 	}
-	if exist("atomic_fail.txt.part") {
-		t.Fatal("temp .part file should be removed on failure")
+	// The .part file is kept on purpose: a subsequent download resumes from it
+	if !exist("atomic_fail.txt.part") {
+		t.Fatal("temp .part file should be kept for resume")
 	}
 	remove(t, "atomic_fail.txt")
+	_ = os.Remove("atomic_fail.txt.part")
+}
+
+func TestResumeFromPartFile(t *testing.T) {
+	var mu sync.Mutex
+	rangeHeader := ""
+
+	// Server with Range support
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		rangeHeader = r.Header.Get("Range")
+		mu.Unlock()
+
+		body := testBody
+		status := http.StatusOK
+		if rh := r.Header.Get("Range"); rh != "" {
+			var start int
+			_, _ = fmt.Sscanf(rh, "bytes=%d-", &start)
+			if start < len(body) && start > 0 {
+				body = body[start:]
+				status = http.StatusPartialContent
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(testBody)-1, len(testBody)))
+			}
+		}
+		w.WriteHeader(status)
+		_, _ = fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+
+	// Emulate an interrupted download: .part with the first half
+	half := len(testBody) / 2
+	if err := os.WriteFile("resume.txt.part", []byte(testBody[:half]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gd := &GoDownload{Quiet: true}
+	if err := gd.Download(srv.URL, &Options{Outpath: "resume.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rangeHeader == "" || rangeHeader != fmt.Sprintf("bytes=%d-", half) {
+		t.Fatalf("expected Range header bytes=%d-, got %q", half, rangeHeader)
+	}
+
+	data, err := os.ReadFile("resume.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != testBody {
+		t.Fatalf("resumed file content mismatch: %q", data)
+	}
+	if exist("resume.txt.part") {
+		t.Fatal(".part file should be renamed after successful resume")
+	}
+}
+
+func TestResumeNoServerSupport(t *testing.T) {
+	// Server without Range support: always returns the full body with 200
+	srv := newTestServer(t, http.StatusOK, testBody)
+
+	// Emulate an interrupted download
+	if err := os.WriteFile("noresume.txt.part", []byte("leftover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gd := &GoDownload{Quiet: true}
+	if err := gd.Download(srv.URL+"/noresume.txt", &Options{Outpath: "noresume.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile("noresume.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != testBody {
+		t.Fatalf("expected fresh full content, got: %q", data)
+	}
+	if exist("noresume.txt.part") {
+		t.Fatal(".part file should be renamed after restart")
+	}
 }
 
 func exist(path string) bool {
