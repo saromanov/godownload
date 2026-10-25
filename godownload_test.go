@@ -1,6 +1,7 @@
 package godownload
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha256"
 	"errors"
@@ -923,6 +924,52 @@ func TestMirrorsAllFail(t *testing.T) {
 	}
 	_ = bad1
 	_ = bad2
+}
+
+func TestDownloadContextCancel(t *testing.T) {
+	// Slow server: the download never finishes within the test
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1000000")
+		w.WriteHeader(http.StatusOK)
+		for i := 0; i < 100; i++ {
+			_, _ = fmt.Fprint(w, strings.Repeat("x", 1024))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	gd := &GoDownload{Quiet: true}
+	err := gd.DownloadContext(ctx, srv.URL, &Options{Outpath: "ctx_test.bin"})
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+	_ = os.Remove("ctx_test.bin")
+	_ = os.Remove("ctx_test.bin.part")
+}
+
+func TestDownloadContextAlreadyDone(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	gd := &GoDownload{Quiet: true}
+	err := gd.DownloadContext(ctx, srv.URL, &Options{Outpath: "ctx_done.txt"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
 }
 
 func exist(path string) bool {

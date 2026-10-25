@@ -1,5 +1,9 @@
 # godownload
 
+[![CI](https://github.com/saromanov/godownload/actions/workflows/ci.yml/badge.svg)](https://github.com/saromanov/godownload/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/saromanov/godownload.svg)](https://pkg.go.dev/github.com/saromanov/godownload)
+[![Go Report Card](https://goreportcard.com/badge/github.com/saromanov/godownload)](https://goreportcard.com/report/github.com/saromanov/godownload)
+
 A Go library for downloading files over HTTP: streaming to disk, retries with exponential backoff, parallel downloads, basic authentication, zip archiving, resumable and multi-segment downloads.
 
 ## Install
@@ -146,3 +150,23 @@ if err := gd.FromManifest("downloads.yaml"); err != nil {
     // ...
 }
 ```
+
+## Context support
+
+Every download method has a context-aware variant (`DownloadContext`,
+`DownloadManyContext`, `DownloadManySimpleContext`, `FromFileContext`,
+`FromManifestContext`). Context cancellation aborts in-flight HTTP requests.
+
+## CLI
+
+The repository ships a CLI built on top of the library (see the [release workflow](.github/workflows/release.yml) for binaries):
+
+```
+godownload [flags] URL...
+godownload --manifest downloads.yaml
+godownload --from-file links.txt --segments 8 --checksum sha256:...
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
