@@ -1,6 +1,9 @@
 package godownload
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -567,6 +570,76 @@ func TestProgressUnknownTotal(t *testing.T) {
 		t.Fatalf("expected total 0 for unknown size, got %d", total)
 	}
 	remove(t, "progress_unknown.bin")
+}
+
+func TestChecksumValid(t *testing.T) {
+	sum := sha256.Sum256([]byte(testBody))
+	srv := newTestServer(t, http.StatusOK, testBody)
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "cs_ok.txt",
+		Checksum: fmt.Sprintf("sha256:%x", sum),
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	if !exist("cs_ok.txt") {
+		t.Fatal("file should exist after successful checksum")
+	}
+	remove(t, "cs_ok.txt")
+}
+
+func TestChecksumMismatch(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "cs_bad.txt",
+		Checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	err := gd.Download(srv.URL, opts)
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if !errors.Is(err, ErrChecksumMismatch) {
+		t.Fatalf("expected ErrChecksumMismatch, got: %v", err)
+	}
+	if exist("cs_bad.txt") {
+		t.Fatal("corrupted file must not be visible under final name")
+	}
+	if exist("cs_bad.txt.part") {
+		t.Fatal("corrupted .part file must be removed")
+	}
+}
+
+func TestChecksumMD5(t *testing.T) {
+	sum := md5.Sum([]byte(testBody))
+	srv := newTestServer(t, http.StatusOK, testBody)
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "cs_md5.txt",
+		Checksum: fmt.Sprintf("md5:%x", sum),
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	remove(t, "cs_md5.txt")
+}
+
+func TestChecksumBadFormat(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "cs_fmt.txt",
+		Checksum: "crc32:deadbeef",
+	}
+	err := gd.Download(srv.URL, opts)
+	if err == nil {
+		t.Fatal("expected error for unsupported checksum format")
+	}
 }
 
 func exist(path string) bool {
