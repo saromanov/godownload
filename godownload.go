@@ -163,6 +163,11 @@ type GoDownload struct {
 	// Zero means unlimited
 	RateLimit int64
 
+	//Segments splits large downloads into this many parallel ranged
+	// segments (only when the server supports Range requests).
+	// Values < 2 mean a single stream. Default: 1
+	Segments int
+
 	//Path to the config file
 	Configpath string
 
@@ -234,6 +239,11 @@ type Options struct {
 	//RateLimit caps the download speed in bytes per second.
 	// Zero means unlimited
 	RateLimit int64
+
+	//Segments splits large downloads into this many parallel ranged
+	// segments (only when the server supports Range requests).
+	// Values < 2 mean a single stream. Default: 1
+	Segments int
 }
 
 // Download provides downloading of file from path.
@@ -258,6 +268,7 @@ func (gd *GoDownload) Download(path string, opt *Options) error {
 			OnProgress: gd.OnProgress,
 			Checksum:   gd.Checksum,
 			RateLimit:  gd.RateLimit,
+			Segments:   gd.Segments,
 		}
 	}
 
@@ -365,6 +376,12 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 	gd.logf("Start to download from %s", path)
 	starttime := time.Now()
 
+	// Multi-segment download: split the file into ranged parallel
+	// segments when the server supports it
+	if opt != nil && opt.Segments > 1 {
+		return gd.multiSegmentDownload(path, opt, outpath, starttime)
+	}
+
 	// If a temp file from a previous interrupted download exists,
 	// try to resume it with a Range request
 	partpath := outpath + partSuffix
@@ -375,7 +392,7 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 		gd.logf("Resuming download of %s from byte %d", path, offset)
 	}
 
-	resp, err := downloadGeneral(gd.client(), retry, path, useragent, auth, rangeset)
+	resp, err := downloadGeneral(gd.client(), retry, path, useragent, auth, rangeset, nil)
 	if err != nil {
 		return err
 	}
@@ -537,6 +554,279 @@ func cryptoHash(algo string) hash.Hash {
 	return nil
 }
 
+// ErrNoRangeSupport is returned when Segments > 1 but the server
+// does not support Range requests
+var ErrNoRangeSupport = errors.New("server does not support range requests")
+
+// minSegmentSize is the smallest split allowed per segment
+const minSegmentSize = 1024 * 1024
+
+// multiSegmentDownload splits the file into opt.Segments ranged
+// parts, downloads them in parallel into separate temp files and
+// assembles the result into outpath. It falls back to a plain
+// single-stream download when the server does not advertise
+// support for Range requests
+func (gd *GoDownload) multiSegmentDownload(path string, opt *Options, outpath string, starttime time.Time) error {
+	retry := opt.Retry
+	useragent := defaultUserAgent
+	if opt.UserAgent != "" {
+		useragent = opt.UserAgent
+	}
+
+	// Probe: request the first byte to learn the size and Range support
+	probe, err := downloadGeneral(gd.client(), retry, path, useragent, opt.Auth, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := probe.Body.Close(); cerr != nil {
+			gd.logf("closing probe body: %v", cerr)
+		}
+	}()
+	if err := checkStatusCode(probe, path); err != nil {
+		return err
+	}
+
+	total := probe.ContentLength
+	acceptRanges := probe.Header.Get("Accept-Ranges") == "bytes"
+	if total <= 0 || !acceptRanges || total < minSegmentSize {
+		gd.logf("Server %s does not support segmented download, falling back to single stream", path)
+		body := io.Reader(probe.Body)
+		if opt.RateLimit > 0 {
+			body = &rateLimitedReader{r: body, bps: opt.RateLimit}
+		}
+		if opt.OnProgress != nil {
+			body = &progressReader{r: body, onProgress: opt.OnProgress, total: max64(total, 0)}
+		}
+		transferred, err := gd.downloadToFile(body, outpath, nil, opt.Checksum)
+		if err != nil {
+			return err
+		}
+		gd.logf("Finish to download from %s in %s. Transferred bytes: %d", path,
+			time.Since(starttime), transferred)
+		return gd.postProcess(opt, outpath)
+	}
+
+	segments := opt.Segments
+	if int64(segments) > total/minSegmentSize {
+		segments = int(total / minSegmentSize)
+		if segments < 1 {
+			segments = 1
+		}
+	}
+	chunk := total / int64(segments)
+
+	type segResult struct {
+		idx  int
+		path string
+		err  error
+	}
+	results := make(chan segResult, segments)
+	segPaths := make([]string, segments)
+	var wg sync.WaitGroup
+	sharedProgress := gd.progressCounter(opt, total)
+
+	for i := 0; i < segments; i++ {
+		start := int64(i) * chunk
+		end := start + chunk - 1
+		if i == segments-1 {
+			end = total - 1 // last segment takes the remainder
+		}
+		segPath := fmt.Sprintf("%s.part%d", outpath, i)
+		segPaths[i] = segPath
+
+		wg.Add(1)
+		go func(idx int, start, end int64, segPath string) {
+			defer wg.Done()
+			if err := gd.downloadSegment(path, opt, retry, useragent, start, end, segPath, sharedProgress); err != nil {
+				results <- segResult{idx: idx, path: segPath, err: err}
+				return
+			}
+			results <- segResult{idx: idx, path: segPath}
+		}(i, start, end, segPath)
+	}
+	wg.Wait()
+	close(results)
+
+	var segErrs []error
+	for r := range results {
+		if r.err != nil {
+			segErrs = append(segErrs, fmt.Errorf("segment %d: %w", r.idx, r.err))
+		}
+	}
+	if len(segErrs) > 0 {
+		// Clean up all segment files on failure
+		for _, sp := range segPaths {
+			_ = os.Remove(sp)
+		}
+		return errors.Join(segErrs...)
+	}
+
+	// Assemble segments into the final file atomically
+	if err := assembleSegments(segPaths, outpath); err != nil {
+		return err
+	}
+	gd.logf("Finish to download from %s in %s. Transferred bytes: %d (%d segments)",
+		path, time.Since(starttime), total, segments)
+	return gd.postProcess(opt, outpath)
+}
+
+// downloadSegment fetches one ranged part of the file into segPath
+func (gd *GoDownload) downloadSegment(path string, opt *Options, retry int, useragent string, start, end int64, segPath string, progress func(int64)) error {
+	startpos := start
+	// Resume the segment if a partial file exists
+	if info, err := os.Stat(segPath); err == nil {
+		startpos = start + info.Size()
+		gd.logf("Resuming segment %s from byte %d", segPath, startpos)
+	}
+	if startpos > end {
+		return nil // segment already complete
+	}
+
+	resp, err := downloadGeneral(gd.client(), retry, path, useragent, opt.Auth, &startpos, &end)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			gd.logf("closing segment body: %v", cerr)
+		}
+	}()
+	if err := checkStatusCode(resp, path); err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusPartialContent {
+		drainBody(resp.Body)
+		return ErrNoRangeSupport
+	}
+
+	flags := os.O_WRONLY | os.O_CREATE
+	resumed := startpos > start
+	if resumed {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+	f, err := os.OpenFile(segPath, flags, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening segment file: %w", err)
+	}
+
+	var reader io.Reader = resp.Body
+	if progress != nil {
+		reader = &countingReader{r: reader, onRead: progress}
+	}
+	if opt.RateLimit > 0 {
+		reader = &rateLimitedReader{r: reader, bps: opt.RateLimit}
+	}
+
+	n, copyErr := io.Copy(f, reader)
+	closeErr := f.Close()
+	if copyErr != nil || closeErr != nil {
+		// Keep the partial segment for resume
+		if copyErr != nil {
+			return fmt.Errorf("copying segment body: %w", copyErr)
+		}
+		return fmt.Errorf("closing segment file: %w", closeErr)
+	}
+	gd.logf("Segment %s done: %d bytes", segPath, n)
+	return nil
+}
+
+// countingReader reports the number of bytes read to the callback
+type countingReader struct {
+	r      io.Reader
+	onRead func(int64)
+}
+
+func (c *countingReader) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	if n > 0 && c.onRead != nil {
+		c.onRead(int64(n))
+	}
+	return n, err
+}
+
+// progressCounter returns a thread-safe byte counter that feeds
+// the OnProgress callback with the aggregate of all segments
+func (gd *GoDownload) progressCounter(opt *Options, total int64) func(int64) {
+	if opt == nil || opt.OnProgress == nil {
+		return nil
+	}
+	var mu sync.Mutex
+	var sum int64
+	return func(n int64) {
+		mu.Lock()
+		sum += n
+		current := sum
+		mu.Unlock()
+		opt.OnProgress(current, total)
+	}
+}
+
+// assembleSegments concatenates segment files into outpath atomically
+func assembleSegments(segPaths []string, outpath string) error {
+	partpath := outpath + partSuffix
+	out, err := os.OpenFile(partpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening temp file: %w", err)
+	}
+	for _, sp := range segPaths {
+		seg, err := os.Open(sp)
+		if err != nil {
+			_ = out.Close()
+			_ = os.Remove(partpath)
+			return fmt.Errorf("opening segment: %w", err)
+		}
+		_, copyErr := io.Copy(out, seg)
+		closeErr := seg.Close()
+		if copyErr != nil {
+			_ = out.Close()
+			_ = os.Remove(partpath)
+			return fmt.Errorf("copying segment: %w", copyErr)
+		}
+		if closeErr != nil {
+			_ = out.Close()
+			_ = os.Remove(partpath)
+			return fmt.Errorf("closing segment: %w", closeErr)
+		}
+	}
+	closeErr := out.Close()
+	if closeErr != nil {
+		_ = os.Remove(partpath)
+		return fmt.Errorf("closing temp file: %w", closeErr)
+	}
+	// Remove segment files
+	for _, sp := range segPaths {
+		_ = os.Remove(sp)
+	}
+	if err := os.Rename(partpath, outpath); err != nil {
+		_ = os.Remove(partpath)
+		return fmt.Errorf("renaming temp file: %w", err)
+	}
+	return nil
+}
+
+// postProcess applies checksum verification and archiving
+// after the file has landed under its final name
+func (gd *GoDownload) postProcess(opt *Options, outpath string) error {
+	if opt != nil && opt.Checksum != "" {
+		if err := verifyChecksum(outpath, opt.Checksum); err != nil {
+			_ = os.Remove(outpath)
+			return err
+		}
+	}
+	if opt != nil && opt.Archive != "" {
+		if err := archivePack(outpath, opt.Archive); err != nil {
+			return fmt.Errorf("packing file: %w", err)
+		}
+		if err := os.Remove(outpath); err != nil {
+			return fmt.Errorf("removing original file after packing: %w", err)
+		}
+	}
+	return nil
+}
+
 // pageDownload downloads the page contents
 func (gd *GoDownload) pageDownload(path string) (string, error) {
 	response, err := gd.client().Get(path)
@@ -600,11 +890,11 @@ func checkStatusCode(resp *http.Response, path string) error {
 // Retries happen on transport errors and on 5xx responses.
 // If rangeset is not nil, a Range header is sent and a 206 response
 // is expected from servers that support resumable downloads
-func downloadGeneral(client *http.Client, retry int, url, useragent, auth string, rangeset *int64) (*http.Response, error) {
+func downloadGeneral(client *http.Client, retry int, url, useragent, auth string, rangeset *int64, rangeEnd *int64) (*http.Response, error) {
 	retrynums := 0
 	pause := defaultRetryPause
 	for {
-		res, err := download(client, url, useragent, auth, rangeset)
+		res, err := download(client, url, useragent, auth, rangeset, rangeEnd)
 		if err == nil {
 			if res.StatusCode >= 500 && res.StatusCode < 600 {
 				drainBody(res.Body)
@@ -630,7 +920,7 @@ func downloadGeneral(client *http.Client, retry int, url, useragent, auth string
 }
 
 // download performs a single GET request
-func download(client *http.Client, url, useragent, auth string, rangeset *int64) (*http.Response, error) {
+func download(client *http.Client, url, useragent, auth string, rangeset *int64, rangeEnd *int64) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -640,7 +930,11 @@ func download(client *http.Client, url, useragent, auth string, rangeset *int64)
 	}
 
 	if rangeset != nil {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", *rangeset))
+		if rangeEnd != nil {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", *rangeset, *rangeEnd))
+		} else {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", *rangeset))
+		}
 	}
 
 	if auth != "" {
