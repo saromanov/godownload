@@ -2,8 +2,13 @@ package godownload
 
 import (
 	"archive/zip"
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net/http"
@@ -102,6 +107,12 @@ type GoDownload struct {
 	// its own goroutine
 	OnProgress func(transferred, total int64)
 
+	//Checksum verifies the downloaded file before it becomes visible.
+	// Format: "<algorithm>:<hex>", supported algorithms: md5, sha1,
+	// sha256, sha512. Example: "sha256:abc123..."
+	// An empty value disables verification
+	Checksum string
+
 	//Path to the config file
 	Configpath string
 
@@ -163,6 +174,12 @@ type Options struct {
 	// Called from the download goroutine; must be cheap or spawn
 	// its own goroutine
 	OnProgress func(transferred, total int64)
+
+	//Checksum verifies the downloaded file before it becomes visible.
+	// Format: "<algorithm>:<hex>", supported algorithms: md5, sha1,
+	// sha256, sha512. Example: "sha256:abc123..."
+	// An empty value disables verification
+	Checksum string
 }
 
 // Download provides downloading of file from path.
@@ -185,6 +202,7 @@ func (gd *GoDownload) Download(path string, opt *Options) error {
 			Auth:       gd.Auth,
 			Archive:    gd.Archive,
 			OnProgress: gd.OnProgress,
+			Checksum:   gd.Checksum,
 		}
 	}
 
@@ -333,7 +351,7 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 		body = &progressReader{r: resp.Body, onProgress: opt.OnProgress, total: total}
 	}
 
-	transferred, err := gd.downloadToFile(body, outpath, rangeset)
+	transferred, err := gd.downloadToFile(body, outpath, rangeset, opt.Checksum)
 	if err != nil {
 		return err
 	}
@@ -356,8 +374,11 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 // final name only after a successful write. On any failure the
 // target file is left untouched and the temp file is removed.
 // If offset is not nil, the body continues an interrupted download
-// and the temp file is appended to instead of being truncated
-func (gd *GoDownload) downloadToFile(resp io.Reader, outpath string, offset *int64) (int64, error) {
+// and the temp file is appended to instead of being truncated.
+// If checksum is not empty ("<algorithm>:<hex>"), the fully written
+// temp file is verified before the rename; on mismatch the temp file
+// is removed and ErrChecksumMismatch is returned
+func (gd *GoDownload) downloadToFile(resp io.Reader, outpath string, offset *int64, checksum string) (int64, error) {
 	partpath := outpath + partSuffix
 	flags := os.O_WRONLY | os.O_CREATE
 	if offset != nil {
@@ -381,11 +402,81 @@ func (gd *GoDownload) downloadToFile(resp io.Reader, outpath string, offset *int
 		return n, fmt.Errorf("closing temp file: %w", closeErr)
 	}
 
+	if checksum != "" {
+		if err := verifyChecksum(partpath, checksum); err != nil {
+			// A corrupted file must not survive as .part: remove it
+			_ = os.Remove(partpath)
+			return n, err
+		}
+	}
+
 	if err := os.Rename(partpath, outpath); err != nil {
 		_ = os.Remove(partpath)
 		return n, fmt.Errorf("renaming temp file: %w", err)
 	}
 	return n, nil
+}
+
+// ErrChecksumMismatch is returned when the downloaded file does not
+// match the expected checksum
+var ErrChecksumMismatch = errors.New("checksum mismatch")
+
+// verifyChecksum checks the file hash against "<algorithm>:<hex>"
+func verifyChecksum(path, expected string) error {
+	algohex, ok := strings.CutPrefix(expected, "sha256:")
+	algo := "sha256"
+	if !ok {
+		algohex, ok = strings.CutPrefix(expected, "sha512:")
+		algo = "sha512"
+	}
+	if !ok {
+		algohex, ok = strings.CutPrefix(expected, "sha1:")
+		algo = "sha1"
+	}
+	if !ok {
+		algohex, ok = strings.CutPrefix(expected, "md5:")
+		algo = "md5"
+	}
+	if !ok {
+		return fmt.Errorf("unsupported checksum format %q, use \"<algorithm>:<hex>\"", expected)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening file for checksum: %w", err)
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("closing file after checksum: %v", cerr)
+		}
+	}()
+
+	h := cryptoHash(algo)
+	if h == nil {
+		return fmt.Errorf("unsupported checksum algorithm %q", algo)
+	}
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hashing file: %w", err)
+	}
+	got := fmt.Sprintf("%x", h.Sum(nil))
+	if !strings.EqualFold(got, algohex) {
+		return fmt.Errorf("%w: got %s, want %s", ErrChecksumMismatch, got, algohex)
+	}
+	return nil
+}
+
+func cryptoHash(algo string) hash.Hash {
+	switch strings.ToLower(algo) {
+	case "md5":
+		return md5.New()
+	case "sha1":
+		return sha1.New()
+	case "sha256":
+		return sha256.New()
+	case "sha512":
+		return sha512.New()
+	}
+	return nil
 }
 
 // pageDownload downloads the page contents
