@@ -1,45 +1,99 @@
-# godownload 
-[![Codacy Badge](https://api.codacy.com/project/badge/Grade/dcf78b0a09b4460ab21a338f9165d0d8)](https://app.codacy.com/app/saromanov/godownload?utm_source=github.com&utm_medium=referral&utm_content=saromanov/godownload&utm_campaign=Badge_Grade_Dashboard)
-[![Build Status](https://travis-ci.org/saromanov/godownload.svg?branch=master)](https://travis-ci.org/saromanov/godownload)
-[![Go Report Card](https://goreportcard.com/badge/github.com/saromanov/godownload)](https://goreportcard.com/report/github.com/saromanov/godownload)
+# godownload
 
-Downloading files
+Библиотека для скачивания файлов по HTTP: стриминг на диск, ретраи с экспоненциальным backoff, параллельная загрузка, базовая аутентификация, упаковка в zip.
 
-### Install
+## Install
 
-``` 
-go get https://github.com/saromanov/godownload
+```
+go get github.com/saromanov/godownload
 ```
 
-### Usage
+## Usage
 
-Download file
+Скачивание файла (имя берётся из URL):
 
 ```go
 package main
-import "github.com/saromanov/godownload"
 
-func main() { 
-    godownload.Download("http://arxiv.org/pdf/1206.5538v3.pdf", nil)
+import godownload "github.com/saromanov/godownload"
+
+func main() {
+    gd := godownload.GoDownload{}
+    if err := gd.Download("http://arxiv.org/pdf/1206.5538v3.pdf", nil); err != nil {
+        panic(err)
+    }
 }
-
 ```
 
-Download with set output file
-```go
-godownload.Download("http://arxiv.org/pdf/1206.5538v3.pdf", &godownload.Options{Outpath: "fun.pdf"})
-```
-
-If you have a links on the file, you can download data by this links
+С указанием выходного файла:
 
 ```go
-download.FromFile("file")
+gd := godownload.GoDownload{}
+err := gd.Download("http://arxiv.org/pdf/1206.5538v3.pdf", &godownload.Options{Outpath: "fun.pdf"})
 ```
 
-### API
-godownload.Options
+Скачивание нескольких файлов параллельно:
 
-Url - Url parameter needs only for DownloadMany. In the case with Download. This paremeter will be ignore
+```go
+gd := godownload.GoDownload{}
+err := gd.DownloadMany([]*godownload.Options{
+    {URL: "https://example.com/a.pdf", Outpath: "a.pdf"},
+    {URL: "https://example.com/b.pdf", Outpath: "b.pdf"},
+})
+```
 
-Outpath - Outpath sets the path of the downloaded file
+Скачивание по ссылкам из файла:
 
+```go
+gd := godownload.GoDownload{}
+err := gd.FromFile("links.txt")
+```
+
+Скачивание HTML-страницы:
+
+```go
+gd := godownload.GoDownload{}
+err := gd.Download("https://example.com", &godownload.Options{Page: true, Outpath: "index.html"})
+```
+
+Пользовательский таймаут и ретраи:
+
+```go
+gd := godownload.GoDownload{Timeout: 30 * time.Second}
+err := gd.Download("https://example.com/file.zip", &godownload.Options{Retry: 3})
+```
+
+## API
+
+### GoDownload
+
+Глобальные настройки (все необязательные):
+
+| Поле | Описание |
+|------|----------|
+| `Overwrite` | Перезаписывать файл с тем же именем |
+| `Alwaysnew` | Всегда создавать новый файл (`file_1`, `file_2`, ...) |
+| `UserAgent` | User-Agent для HTTP-запросов |
+| `Retry` | Количество повторных попыток при ошибках сети и 5xx |
+| `Auth` | Basic-аутентификация в формате `username:password` |
+| `Archive` | Формат архива для скачанного файла (`zip`) |
+| `Configpath` | Путь к YAML-конфигу |
+| `Outdir` | Каталог для скачанных файлов |
+| `Timeout` | Таймаут HTTP-запроса (по умолчанию — без таймаута) |
+| `Logger` | Свой logger (`nil` — стандартный `log`) |
+| `Quiet` | Отключить весь вывод |
+| `HTTPClient` | Свой `http.Client` |
+
+### Options
+
+Настройки одного скачивания (те же поля, где применимо) плюс:
+
+| Поле | Описание |
+|------|----------|
+| `URL` | URL — нужен только для `DownloadMany` |
+| `Page` | Скачать HTML-страницу вместо файла |
+| `Outpath` | Путь выходного файла |
+
+Все методы возвращают `error`. Специфические ошибки: `ErrFileExists`, `ErrUnsupportedArchive`.
+
+> **v2.0:** методы больше не завершают процесс через `log.Fatal`/`panic` и возвращают `error`. Это несовместимое изменение по сравнению с v1.

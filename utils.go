@@ -1,32 +1,29 @@
 package godownload
 
 import (
-	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
-	//"strings"
 )
 
-//This module contains some utils
+//Этот модуль содержит некоторые утилиты
 
-//fileCount provides counting duplicates of file.
-//File duplicate in this context is file like a file_1.txt, file_2.txt etc
+// fileCount provides counting duplicates of file.
+// File duplicate in this context is file like a file_1.txt, file_2.txt etc
 //
-//TODO: Resolve bug with not names reaching out of order (file_1, file_5)
-//After this, new file will create with name file_3, but more correct is file_6
+// Deprecated: use nextFreeName instead, it resolves names without gaps
 func fileCount(path string) int {
 	count := 0
 	dir := filepath.Dir(path)
-	dirdata, err := ioutil.ReadDir(dir)
+	dirdata, err := os.ReadDir(dir)
 	if err != nil {
-		panic(err)
+		return 0
 	}
 	currentname := filepath.Base(path)
 	ext := filepath.Ext(currentname)
-	currentname = currentname[0 : len(currentname)-len(ext)]
-	pattern := fmt.Sprintf("%s_*", currentname)
+	currentname = currentname[:len(currentname)-len(ext)]
+	pattern := currentname + "_*"
 	if ext != "" {
-		pattern = fmt.Sprintf("%s_*%s", currentname, ext)
+		pattern = currentname + "_*" + ext
 	}
 
 	for _, item := range dirdata {

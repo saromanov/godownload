@@ -2,32 +2,47 @@ package godownload
 
 import (
 	"archive/zip"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
-//GoDownload provides main struct for global config and downloading items
+// Version — версия библиотеки.
+const Version = "2.0.0"
+
+// defaultUserAgent используется, если пользователь не задал свой User-Agent.
+const defaultUserAgent = "godownload/" + Version
+
+// defaultRetryPause — начальная пауза между попытками скачивания (с экспоненциальным ростом).
+const defaultRetryPause = 100 * time.Millisecond
+
+// ErrEmptyOutpath — ошибка, когда для скачивания страницы не задан путь вывода.
+var ErrEmptyOutpath = errors.New("outpath is not specified")
+
+// ErrFileExists — ошибка, когда целевой файл уже существует, а перезапись запрещена.
+var ErrFileExists = errors.New("file already exists")
+
+// ErrUnsupportedArchive — ошибка неподдерживаемого формата архива.
+var ErrUnsupportedArchive = errors.New("unsupported archive format")
+
+// GoDownload provides main struct for global config and downloading items
 type GoDownload struct {
 
 	//Overwrite provides overwriting file with same name
 	Overwrite bool
 
-	//Always create new file. If file with same name exist
-	// create "file_1"
+	//Alwaysnew provides always creating new file.
+	// If file with same name exist, create "file_1"
 	Alwaysnew bool
 
 	//UserAgent provides setting user agent for http request
@@ -39,21 +54,37 @@ type GoDownload struct {
 	//Authentication before downloading. Auth in the format username:password
 	Auth string
 
-	//Specify archive format for downloaded file
+	//Specify archive format for downloaded file.
+	// Supported values: "zip"
 	Archive string
 
 	//Path to the config file
 	Configpath string
 
-	//Directory for downloaded file
+	//Directory for downloaded files
 	Outdir string
+
+	//Timeout limits the time for the whole request.
+	// Zero means no timeout (not recommended)
+	Timeout time.Duration
+
+	//Logger is used for all messages of the library.
+	// nil means log.Default()
+	Logger *log.Logger
+
+	//Quiet disables all logging output
+	Quiet bool
+
+	//HTTPClient allows to provide a custom http.Client.
+	// If nil, a client with Timeout is used
+	HTTPClient *http.Client
 }
 
 // Options defines attributes for config of GoDownload
 type Options struct {
 
 	// URL parameter needs only for DownloadMany.
-	// In the case with Download. This paremeter will be ignore
+	// In the case with Download. This parameter will be ignored
 	URL string
 
 	//Download web page instead file
@@ -65,8 +96,8 @@ type Options struct {
 	//Overwrite provides overwriting file with same name
 	Overwrite bool
 
-	//Always create new file. If file with same name exist
-	// create "file_1"
+	//Alwaysnew provides always creating new file.
+	// If file with same name exist, create "file_1"
 	Alwaysnew bool
 
 	//UserAgent provides setting user agent for http request
@@ -78,19 +109,18 @@ type Options struct {
 	//Authentication before downloading. Auth in the format username:password
 	Auth string
 
-	//Specify archive format for downloaded file
+	//Specify archive format for downloaded file.
+	// Supported values: "zip"
 	Archive string
-
-	//TODO
-	TimeLimit time.Time
 }
 
-// Download provides downloading of file
-func (gd *GoDownload) Download(path string, opt *Options) {
+// Download provides downloading of file from path.
+// Instead of terminating the process on error, it returns an error
+func (gd *GoDownload) Download(path string, opt *Options) error {
 	if gd.Configpath != "" {
 		opta, err := loadConfig(gd.Configpath)
 		if err != nil {
-			log.Fatal(err)
+			return fmt.Errorf("loading config: %w", err)
 		}
 		gd = opta
 	}
@@ -107,115 +137,149 @@ func (gd *GoDownload) Download(path string, opt *Options) {
 	}
 
 	if opt.Page {
-		result, err := gd.pageDownload(path, opt)
+		result, err := gd.pageDownload(path)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 
-		createTargetFile(opt.Outpath)
-
-		starttime := time.Now()
-		errwrite := ioutil.WriteFile(opt.Outpath, []byte(result), 0777)
-		if errwrite != nil {
-			log.Fatal(errwrite)
+		outpath := opt.Outpath
+		if outpath == "" {
+			outpath, err = getFileNameFromURL(path)
+			if err != nil {
+				return err
+			}
 		}
-		log.Printf("Finish to download from %s in %s.", path,
-			time.Since(starttime))
-
-	} else {
-		gd.fileDownload(path, opt)
+		if err := os.WriteFile(outpath, []byte(result), 0o644); err != nil {
+			return fmt.Errorf("writing page to file: %w", err)
+		}
+		gd.logf("Finish to download from %s", path)
+		return nil
 	}
+
+	return gd.fileDownload(path, opt)
 }
 
-//DownloadMany provides downloading several files
-func (gd *GoDownload) DownloadMany(items []*Options) {
-	runtime.GOMAXPROCS(runtime.NumCPU())
+// DownloadMany provides downloading several files concurrently.
+// Errors of individual downloads are collected and returned
+// as a single aggregated error
+func (gd *GoDownload) DownloadMany(items []*Options) error {
+	errs := make([]error, len(items))
 	var wg sync.WaitGroup
-	for _, item := range items {
+	for i, item := range items {
 		wg.Add(1)
-		go func(it *Options) {
-			gd.Download(it.URL, it)
-			wg.Done()
-		}(item)
+		go func(idx int, it *Options) {
+			defer wg.Done()
+			errs[idx] = gd.Download(it.URL, it)
+		}(i, item)
 	}
 	wg.Wait()
-}
 
-//DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
-func (gd *GoDownload) DownloadManySimple(items []string) {
-	result := []*Options{}
-	for _, item := range items {
-		result = append(result, &Options{URL: item, Outpath: getFileNameFromURL(item)})
+	multi := make([]error, 0, len(items))
+	for _, err := range errs {
+		if err != nil {
+			multi = append(multi, err)
+		}
 	}
-	gd.DownloadMany(result)
+	if len(multi) > 0 {
+		return errors.Join(multi...)
+	}
+	return nil
 }
 
-//FromFile provides getting links from file and download
-func (gd *GoDownload) FromFile(path string) {
-	urls := fromFile(path)
-	gd.DownloadManySimple(urls)
+// DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
+func (gd *GoDownload) DownloadManySimple(items []string) error {
+	result := make([]*Options, 0, len(items))
+	for _, item := range items {
+		name, err := getFileNameFromURL(item)
+		if err != nil {
+			return err
+		}
+		result = append(result, &Options{URL: item, Outpath: name})
+	}
+	return gd.DownloadMany(result)
 }
 
-//fileDownload method provides downloading files
-func (gd *GoDownload) fileDownload(path string, opt *Options) {
+// FromFile provides getting links from file and downloading
+func (gd *GoDownload) FromFile(path string) error {
+	urls, err := fromFile(path)
+	if err != nil {
+		return err
+	}
+	return gd.DownloadManySimple(urls)
+}
+
+// fileDownload method provides downloading files
+func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 	if gd.Outdir != "" {
-		createDir(gd.Outdir)
-		if opt.Outpath != "" {
-			opt.Outpath = fmt.Sprintf("%s/%s", gd.Outdir, opt.Outpath)
-		} else {
-			opt.Outpath = gd.Outdir
+		if err := createDir(gd.Outdir); err != nil {
+			return fmt.Errorf("creating outdir: %w", err)
 		}
 	}
 
-	outpath := outpathResolver(path, opt)
-	fmt.Println(outpath)
-
-	//Last chance to check if outpath is not empty
-	if outpath == "" {
-		log.Fatal("Something wen wrong and outpath is empty")
+	outpath, err := outpathResolver(path, opt)
+	if err != nil {
+		return err
+	}
+	if gd.Outdir != "" {
+		// Файл кладём в Outdir, сохраняя имя файла из outpath
+		outpath = filepath.Join(gd.Outdir, filepath.Base(outpath))
+		opt.Outpath = outpath
 	}
 
-	createTargetFile(outpath)
 	retry := 0
-	useragent := ""
+	useragent := defaultUserAgent
 	auth := ""
 	if opt != nil {
 		retry = opt.Retry
-		useragent = opt.UserAgent
+		if opt.UserAgent != "" {
+			useragent = opt.UserAgent
+		}
 		auth = opt.Auth
 	}
-	log.Printf("Start to download from %s", path)
+
+	gd.logf("Start to download from %s", path)
 	starttime := time.Now()
-	resp, err := downloadGeneral(retry, path, useragent, auth)
+	resp, err := downloadGeneral(gd.client(), retry, path, useragent, auth)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer resp.Body.Close()
-	transferred := copyToFile(resp.Body, outpath)
-	log.Printf("Finish to download from %s in %s. Transferred bytes: %d", path,
-		time.Since(starttime), transferred)
-	if opt != nil && opt.Archive == "zip" {
-		err := zipPack(outpath)
-		if err != nil {
-			log.Printf("Error to create zeip archive")
-			return
-		}
-		os.Remove(outpath)
+
+	if err := checkStatusCode(resp, path); err != nil {
+		return err
 	}
+
+	transferred, err := copyToFile(resp.Body, outpath)
+	if err != nil {
+		return err
+	}
+	gd.logf("Finish to download from %s in %s. Transferred bytes: %d", path,
+		time.Since(starttime), transferred)
+
+	if opt != nil && opt.Archive != "" {
+		if err := archivePack(outpath, opt.Archive); err != nil {
+			return fmt.Errorf("packing file: %w", err)
+		}
+		if err := os.Remove(outpath); err != nil {
+			return fmt.Errorf("removing original file after packing: %w", err)
+		}
+	}
+	return nil
 }
 
-func (gd *GoDownload) pageDownload(path string, opt *Options) (string, error) {
-	if opt.Outpath != "" {
-		return "", errors.New("outpath not specified")
-	}
-
-	response, err := http.Get(path)
+// pageDownload downloads the page contents
+func (gd *GoDownload) pageDownload(path string) (string, error) {
+	response, err := gd.client().Get(path)
 	if err != nil {
 		return "", err
 	}
 
 	defer response.Body.Close()
-	contents, err := ioutil.ReadAll(response.Body)
+	if err := checkStatusCode(response, path); err != nil {
+		return "", err
+	}
+
+	contents, err := io.ReadAll(response.Body)
 	if err != nil {
 		return "", err
 	}
@@ -223,33 +287,81 @@ func (gd *GoDownload) pageDownload(path string, opt *Options) (string, error) {
 	return string(contents), nil
 }
 
-func checkExist(path string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false
+// client returns http client for this instance
+func (gd *GoDownload) client() *http.Client {
+	if gd.HTTPClient != nil {
+		return gd.HTTPClient
 	}
-
-	return true
+	return &http.Client{Timeout: gd.Timeout}
 }
 
-func createTargetFile(path string) {
-	res, err := os.Create(path)
-	if err != nil {
-		panic(err)
+// logf writes a log message, unless Quiet is set
+func (gd *GoDownload) logf(format string, args ...any) {
+	if gd.Quiet {
+		return
 	}
-
-	defer res.Close()
+	logger := gd.Logger
+	if logger == nil {
+		logger = log.Default()
+	}
+	logger.Printf(format, args...)
 }
 
-//Main inner method for downloading
-func download(url, useragent, auth string) (*http.Response, error) {
-	client := http.Client{}
-	req, err := http.NewRequest("GET", url, nil)
+// checkStatusCode validates the HTTP status code of the response
+func checkStatusCode(resp *http.Response, path string) error {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, path)
+	}
+	return nil
+}
+
+// Main inner method for downloading with retries and exponential backoff.
+// Retries happen on transport errors and on 5xx responses
+func downloadGeneral(client *http.Client, retry int, url, useragent, auth string) (*http.Response, error) {
+	retrynums := 0
+	pause := defaultRetryPause
+	for {
+		res, err := download(client, url, useragent, auth)
+		if err == nil {
+			if res.StatusCode >= 500 && res.StatusCode < 600 && (retry == 0 || retrynums == retry) {
+				io.Copy(io.Discard, res.Body)
+				res.Body.Close()
+				return res, nil
+			}
+			if res.StatusCode >= 500 && res.StatusCode < 600 {
+				io.Copy(io.Discard, res.Body)
+				res.Body.Close()
+				log.Printf("Tried again to download from %s: status %d", url, res.StatusCode)
+				time.Sleep(pause)
+				pause *= 2
+				retrynums++
+				continue
+			}
+			return res, nil
+		}
+		if retry == 0 || retrynums == retry {
+			return nil, err
+		}
+		log.Printf("Tried again to download from %s: %v", url, err)
+		time.Sleep(pause)
+		pause *= 2
+		retrynums++
+	}
+}
+
+// download performs a single GET request
+func download(client *http.Client, url, useragent, auth string) (*http.Response, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
 	if auth != "" {
-		res := strings.Split(auth, ":")
+		res := strings.SplitN(auth, ":", 2)
 		if len(res) != 2 {
 			return nil, errors.New("authentication must be in the format username:password")
 		}
@@ -259,6 +371,7 @@ func download(url, useragent, auth string) (*http.Response, error) {
 	if useragent != "" {
 		req.Header.Set("User-Agent", useragent)
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -266,96 +379,105 @@ func download(url, useragent, auth string) (*http.Response, error) {
 	return resp, nil
 }
 
-func downloadGeneral(retry int, url, useragent, auth string) (*http.Response, error) {
-	retrynums := 0
-	for {
-		res, err := download(url, useragent, auth)
-		if err != nil {
-			if retry == 0 || retrynums == retry {
-				return nil, err
-			}
-		} else {
-			return res, nil
-		}
-		fmt.Printf("Tried again to download from %s\n", url)
-		retrynums++
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-//copy to file
-func copyToFile(resp io.Reader, outpath string) int {
-	dst := &bytes.Buffer{}
-
-	_, err := io.Copy(dst, resp)
+// copyToFile streams the response body to the file
+// instead of buffering it fully in memory
+func copyToFile(resp io.Reader, outpath string) (int64, error) {
+	f, err := os.OpenFile(outpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		panic(err)
+		return 0, fmt.Errorf("opening target file: %w", err)
 	}
+	defer f.Close()
 
-	errwrite := ioutil.WriteFile(outpath, dst.Bytes(), 0777)
-	if errwrite != nil {
-		log.Fatal(errwrite)
+	n, err := io.Copy(f, resp)
+	if err != nil {
+		return n, fmt.Errorf("copying response body: %w", err)
 	}
-	return dst.Len()
+	return n, nil
 }
 
-func getFileNameFromURL(urlitem string) string {
+func getFileNameFromURL(urlitem string) (string, error) {
 	res, err := url.Parse(urlitem)
 	if err != nil {
-		panic(err)
+		return "", fmt.Errorf("parsing url: %w", err)
 	}
-
+	if res.Path == "" || strings.HasSuffix(res.Path, "/") {
+		return "", fmt.Errorf("unable to resolve filename from url %s", urlitem)
+	}
 	items := strings.Split(res.Path, "/")
-	return items[len(items)-1]
+	name := items[len(items)-1]
+	if name == "" {
+		return "", fmt.Errorf("unable to resolve filename from url %s", urlitem)
+	}
+	return name, nil
 }
 
-//outpathResolver provides correct outpath for downloaded file
-//It's done for better view of the Download method
-func outpathResolver(path string, item *Options) (outpath string) {
+// outpathResolver provides correct outpath for downloaded file
+// It's done for better view of the Download method
+func outpathResolver(path string, item *Options) (string, error) {
 	if item == nil {
-		outpath = getFileNameFromURL(path)
-		if checkExist(outpath) {
-			log.Fatalf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path)
+		outpath, err := getFileNameFromURL(path)
+		if err != nil {
+			return "", err
 		}
-		return
-
+		if checkExist(outpath) {
+			return "", fmt.Errorf("%w: %s, set Options.Overwrite = true to overwrite", ErrFileExists, outpath)
+		}
+		return outpath, nil
 	}
-	//Default value for outpath
-	outpath = item.Outpath
 
-	//Check if outpath is exist
-	if checkExist(item.Outpath) {
-		if item.Alwaysnew {
-			ext := filepath.Ext(outpath)
-			if ext == "" {
-				name := getFileNameFromURL(path)
-				outpath = outpath + "/" + name
-			}
-			dupcount := fileCount(outpath)
-			newname := outpath[0:len(outpath)-len(ext)] +
-				fmt.Sprintf("_%d", dupcount+1)
-			if len(ext) > 0 {
-				newname += ext
-			}
-			if filepath.Dir(outpath) == "." {
-				outpath = filepath.Dir(outpath) + "/" + newname
-			} else {
-				outpath = newname
-			}
-		} else if !item.Overwrite {
-			log.Fatalf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", item.Outpath)
+	//Default value for outpath: if not set, resolve from URL
+	outpath := item.Outpath
+	if outpath == "" {
+		name, err := getFileNameFromURL(path)
+		if err != nil {
+			return "", err
 		}
-	} else {
-		outpath = getFileNameFromURL(path)
-		if checkExist(outpath) {
-			log.Fatalf("File %s already exist. You can set Options.Overwrite = true for overwrite this file", path)
+		outpath = name
+	}
+
+	//Check if outpath exists
+	if checkExist(outpath) {
+		switch {
+		case item.Alwaysnew:
+			outpath = nextFreeName(outpath)
+		case item.Overwrite:
+			// Перезаписываем существующий файл
+		default:
+			return "", fmt.Errorf("%w: %s, set Options.Overwrite = true to overwrite", ErrFileExists, outpath)
 		}
 	}
 
-	return outpath
+	return outpath, nil
 }
 
-//Pack output files to zip archive
+// nextFreeName returns the name of the file that is not busy,
+// adding a numeric suffix like name_1, name_2, ...
+func nextFreeName(outpath string) string {
+	ext := filepath.Ext(outpath)
+	base := outpath
+	if ext != "" {
+		base = outpath[:len(outpath)-len(ext)]
+	}
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("%s_%d%s", base, i, ext)
+		if !checkExist(candidate) {
+			return candidate
+		}
+	}
+}
+
+// archivePack packs the output file into an archive of the given format.
+// Supported formats: zip
+func archivePack(path, format string) error {
+	switch strings.ToLower(format) {
+	case "zip":
+		return zipPack(path)
+	default:
+		return fmt.Errorf("%w: %s", ErrUnsupportedArchive, format)
+	}
+}
+
+// Pack output files to zip archive
 func zipPack(path string) error {
 	newfile, err := os.Create(path + ".zip")
 	if err != nil {
@@ -383,31 +505,42 @@ func zipPack(path string) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(writer, zipfile)
-	fmt.Printf("Output as %s\n", path+".zip")
-	return err
+	if _, err := io.Copy(writer, zipfile); err != nil {
+		return fmt.Errorf("copying data to archive: %w", err)
+	}
+	if err := zipit.Close(); err != nil {
+		return fmt.Errorf("closing archive: %w", err)
+	}
+	log.Printf("Output as %s", path+".zip")
+	return nil
 }
 
-//loadConfig data from .yaml path
+// loadConfig data from .yaml path
 func loadConfig(path string) (*GoDownload, error) {
 	var opt GoDownload
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	errconf := yaml.Unmarshal(data, &opt)
-	if errconf != nil {
-		return nil, errconf
+	if err := yaml.Unmarshal(data, &opt); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 	return &opt, nil
 }
 
-//create dir for downloading
-func createDir(dirname string) {
+// createDir creates a directory for downloading
+func createDir(dirname string) error {
 	if _, err := os.Stat(dirname); os.IsNotExist(err) {
-		errmk := os.Mkdir(dirname, 0777)
-		if errmk != nil {
-			log.Fatal(errmk)
+		if err := os.MkdirAll(dirname, 0o755); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func checkExist(path string) bool {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false
+	}
+	return true
 }
