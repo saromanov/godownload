@@ -26,6 +26,10 @@ const defaultUserAgent = "godownload/" + Version
 // defaultRetryPause — начальная пауза между попытками скачивания (с экспоненциальным ростом).
 const defaultRetryPause = 100 * time.Millisecond
 
+// partSuffix is appended to the target file name while the download
+// is in progress (atomic writes)
+const partSuffix = ".part"
+
 // ErrEmptyOutpath — ошибка, когда для скачивания страницы не задан путь вывода.
 var ErrEmptyOutpath = errors.New("outpath is not specified")
 
@@ -253,7 +257,7 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 		return err
 	}
 
-	transferred, err := copyToFile(resp.Body, outpath)
+	transferred, err := gd.downloadToFile(resp.Body, outpath)
 	if err != nil {
 		return err
 	}
@@ -269,6 +273,35 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 		}
 	}
 	return nil
+}
+
+// downloadToFile writes the response body to outpath atomically:
+// data goes to a temporary ".part" file which is renamed to the
+// final name only after a successful write. On any failure the
+// target file is left untouched and the temp file is removed
+func (gd *GoDownload) downloadToFile(resp io.Reader, outpath string) (int64, error) {
+	partpath := outpath + partSuffix
+	f, err := os.OpenFile(partpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return 0, fmt.Errorf("opening temp file: %w", err)
+	}
+
+	n, copyErr := io.Copy(f, resp)
+	closeErr := f.Close()
+	if copyErr != nil {
+		_ = os.Remove(partpath)
+		return n, fmt.Errorf("copying response body: %w", copyErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(partpath)
+		return n, fmt.Errorf("closing temp file: %w", closeErr)
+	}
+
+	if err := os.Rename(partpath, outpath); err != nil {
+		_ = os.Remove(partpath)
+		return n, fmt.Errorf("renaming temp file: %w", err)
+	}
+	return n, nil
 }
 
 // pageDownload downloads the page contents
@@ -388,26 +421,6 @@ func download(client *http.Client, url, useragent, auth string) (*http.Response,
 		return nil, err
 	}
 	return resp, nil
-}
-
-// copyToFile streams the response body to the file
-// instead of buffering it fully in memory
-func copyToFile(resp io.Reader, outpath string) (int64, error) {
-	f, err := os.OpenFile(outpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return 0, fmt.Errorf("opening target file: %w", err)
-	}
-	defer func() {
-		if cerr := f.Close(); cerr != nil {
-			log.Printf("closing target file: %v", cerr)
-		}
-	}()
-
-	n, err := io.Copy(f, resp)
-	if err != nil {
-		return n, fmt.Errorf("copying response body: %w", err)
-	}
-	return n, nil
 }
 
 func getFileNameFromURL(urlitem string) (string, error) {
