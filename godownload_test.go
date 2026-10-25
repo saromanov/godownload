@@ -676,6 +676,156 @@ func TestRateLimit(t *testing.T) {
 	remove(t, "ratelimit.bin")
 }
 
+func TestMultiSegment(t *testing.T) {
+	// 4 MiB body, 4 segments
+	body := strings.Repeat("abcdefgh", 512*1024)
+	var mu sync.Mutex
+	rangeRequests := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rh := r.Header.Get("Range"); rh != "" {
+			mu.Lock()
+			rangeRequests++
+			mu.Unlock()
+			var start, end int64
+			if strings.Contains(rh, "-") && !strings.HasSuffix(rh, "-") {
+				_, _ = fmt.Sscanf(rh, "bytes=%d-%d", &start, &end)
+			} else {
+				_, _ = fmt.Sscanf(rh, "bytes=%d-", &start)
+				end = int64(len(body)) - 1
+			}
+			if start > int64(len(body)) || end >= int64(len(body)) {
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(body)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = fmt.Fprint(w, body[start:end+1])
+			return
+		}
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		_, _ = fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Cleanup(func() { _ = os.Remove("multi.bin") })
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "multi.bin",
+		Segments: 4,
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	if rangeRequests < 4 { // one ranged request per segment
+		t.Fatalf("expected ranged requests, got %d", rangeRequests)
+	}
+	data, err := os.ReadFile("multi.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != body {
+		t.Fatal("assembled content mismatch")
+	}
+	// No leftover segment files
+	matches, _ := filepath.Glob("multi.bin.part*")
+	if len(matches) != 0 {
+		t.Fatalf("leftover segment files: %v", matches)
+	}
+	remove(t, "multi.bin")
+}
+
+func TestMultiSegmentFallback(t *testing.T) {
+	// Server without Accept-Ranges: must fall back to a single stream
+	body := strings.Repeat("y", 2*1024*1024)
+	srv := newTestServer(t, http.StatusOK, body)
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "fallback.bin",
+		Segments: 4,
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("fallback.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != body {
+		t.Fatal("content mismatch on fallback")
+	}
+	remove(t, "fallback.bin")
+}
+
+func TestMultiSegmentResume(t *testing.T) {
+	body := strings.Repeat("z", 3*1024*1024)
+	var mu sync.Mutex
+	calls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Accept-Ranges", "bytes")
+		if rh := r.Header.Get("Range"); rh != "" {
+			var start, end int64
+			if strings.HasSuffix(rh, "-") {
+				_, _ = fmt.Sscanf(rh, "bytes=%d-", &start)
+				end = int64(len(body)) - 1
+			} else {
+				_, _ = fmt.Sscanf(rh, "bytes=%d-%d", &start, &end)
+			}
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(body)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = fmt.Fprint(w, body[start:end+1])
+			return
+		}
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		_, _ = fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+
+	// Pre-seed a partial segment file (first 1 MiB of the 3 MiB body),
+	// emulating a previously interrupted segmented download
+	if err := os.WriteFile("mresume.bin.part0", []byte(body[:1024*1024]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = os.Remove("mresume.bin") })
+	t.Cleanup(func() { _ = os.Remove("mresume.bin.part0") })
+
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "mresume.bin",
+		Segments: 3,
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile("mresume.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != body {
+		t.Fatal("content mismatch on segmented resume")
+	}
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n < 3 { // one ranged request per segment (resumed segment included)
+		t.Fatalf("expected ranged requests after resume, got %d", n)
+	}
+	matches, _ := filepath.Glob("mresume.bin.part*")
+	if len(matches) != 0 {
+		t.Fatalf("leftover segment files: %v", matches)
+	}
+	remove(t, "mresume.bin")
+}
+
 func exist(path string) bool {
 	return checkExist(path)
 }
