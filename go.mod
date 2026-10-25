@@ -1,5 +1,5 @@
 module github.com/saromanov/godownload
 
-go 1.12
+go 1.24.0
 
-require gopkg.in/yaml.v2 v2.2.2
+require gopkg.in/yaml.v3 v3.0.1

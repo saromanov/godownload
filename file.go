@@ -2,16 +2,16 @@ package godownload
 
 import (
 	"fmt"
-	"io/ioutil"
-	"log"
+	"net/url"
+	"os"
 	"strings"
 )
 
-//This module implemented getting and parsing urls from file
+//Этот модуль реализует получение и разбор ссылок из файла
 
 func prepare(filedata string) string {
 	replace := func(check string) string {
-		return strings.Replace(filedata, check, "", -1)
+		return strings.ReplaceAll(filedata, check, "")
 	}
 
 	filedata = replace("(")
@@ -20,38 +20,49 @@ func prepare(filedata string) string {
 	return filedata
 }
 
-//hashURL returns true if item is url and false otherwise
+// hasURL returns true if item is url and false otherwise
 func hasURL(item string) bool {
-	prefix := func(check string) bool {
-		return strings.HasPrefix(item, check)
+	if len(item) < 7 {
+		return false
 	}
-	return prefix("http") || prefix("https") || prefix("ftp")
+	for _, scheme := range []string{"http://", "https://", "ftp://"} {
+		if strings.HasPrefix(item, scheme) {
+			return true
+		}
+	}
+	return false
 }
 
-//FromFile provides getting links from file and download
-func fromFile(path string) []string {
-	data, err := ioutil.ReadFile(path)
+// validURL checks that the string is a parseable URL with a known scheme
+func validURL(item string) bool {
+	res, err := url.Parse(item)
+	if err != nil || res.Scheme == "" || res.Host == "" {
+		return false
+	}
+	return true
+}
+
+// fromFile reads the file and returns a list of unique URLs from it
+func fromFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("reading file: %w", err)
 	}
 
-	keyurls := map[string]bool{}
+	keyurls := make(map[string]bool)
 	newdata := prepare(string(data))
 	for _, line := range strings.Split(newdata, "\n") {
-		for _, part := range strings.Split(line, " ") {
+		for _, part := range strings.Fields(line) {
 			_, ok := keyurls[part]
-			if hasURL(part) && !ok {
+			if hasURL(part) && !ok && validURL(part) {
 				keyurls[part] = true
 			}
 		}
 	}
-	log.Printf("In the file %s, found URLs: %d", path, len(keyurls))
-	fmt.Println("URLs: ")
-	urls := []string{}
+
+	urls := make([]string, 0, len(keyurls))
 	for key := range keyurls {
-		fmt.Println(key)
 		urls = append(urls, key)
 	}
-
-	return urls
+	return urls, nil
 }
