@@ -1,6 +1,6 @@
 # godownload
 
-Библиотека для скачивания файлов по HTTP: стриминг на диск, ретраи с экспоненциальным backoff, параллельная загрузка, базовая аутентификация, упаковка в zip.
+A Go library for downloading files over HTTP: streaming to disk, retries with exponential backoff, parallel downloads, basic authentication, zip archiving, resumable and multi-segment downloads.
 
 ## Install
 
@@ -10,7 +10,7 @@ go get github.com/saromanov/godownload
 
 ## Usage
 
-Скачивание файла (имя берётся из URL):
+Download a file (the name is taken from the URL):
 
 ```go
 package main
@@ -25,14 +25,14 @@ func main() {
 }
 ```
 
-С указанием выходного файла:
+With a specific output file:
 
 ```go
 gd := godownload.GoDownload{}
 err := gd.Download("http://arxiv.org/pdf/1206.5538v3.pdf", &godownload.Options{Outpath: "fun.pdf"})
 ```
 
-Скачивание нескольких файлов параллельно:
+Download multiple files in parallel:
 
 ```go
 gd := godownload.GoDownload{}
@@ -42,21 +42,21 @@ err := gd.DownloadMany([]*godownload.Options{
 })
 ```
 
-Скачивание по ссылкам из файла:
+Download by links listed in a file:
 
 ```go
 gd := godownload.GoDownload{}
 err := gd.FromFile("links.txt")
 ```
 
-Скачивание HTML-страницы:
+Download an HTML page:
 
 ```go
 gd := godownload.GoDownload{}
 err := gd.Download("https://example.com", &godownload.Options{Page: true, Outpath: "index.html"})
 ```
 
-Пользовательский таймаут и ретраи:
+Custom timeout and retries:
 
 ```go
 gd := godownload.GoDownload{Timeout: 30 * time.Second}
@@ -67,36 +67,40 @@ err := gd.Download("https://example.com/file.zip", &godownload.Options{Retry: 3}
 
 ### GoDownload
 
-Глобальные настройки (все необязательные):
+Global settings (all optional):
 
-| Поле | Описание |
-|------|----------|
-| `Overwrite` | Перезаписывать файл с тем же именем |
-| `Alwaysnew` | Всегда создавать новый файл (`file_1`, `file_2`, ...) |
-| `UserAgent` | User-Agent для HTTP-запросов |
-| `Retry` | Количество повторных попыток при ошибках сети и 5xx |
-| `Auth` | Basic-аутентификация в формате `username:password` |
-| `Archive` | Формат архива для скачанного файла (`zip`) |
-| `Configpath` | Путь к YAML-конфигу |
-| `Outdir` | Каталог для скачанных файлов |
-| `Timeout` | Таймаут HTTP-запроса (по умолчанию — без таймаута) |
-| `Logger` | Свой logger (`nil` — стандартный `log`) |
-| `Quiet` | Отключить весь вывод |
-| `HTTPClient` | Свой `http.Client` |
+| Field | Description |
+|-------|-------------|
+| `Overwrite` | Overwrite a file with the same name |
+| `Alwaysnew` | Always create a new file (`file_1`, `file_2`, ...) |
+| `UserAgent` | User-Agent for HTTP requests |
+| `Retry` | Number of retry attempts on network errors and 5xx responses |
+| `Auth` | Basic authentication in the `username:password` format |
+| `Archive` | Archive format for the downloaded file (`zip`) |
+| `Configpath` | Path to a YAML config |
+| `Outdir` | Directory for downloaded files |
+| `Timeout` | HTTP request timeout (no timeout by default) |
+| `Logger` | Custom logger (`nil` — standard `log`) |
+| `Quiet` | Disable all logging output |
+| `HTTPClient` | Custom `http.Client` |
+| `OnProgress` | Progress callback (see below) |
+| `Checksum` | Checksum verification (see below) |
+| `RateLimit` | Download speed cap in bytes per second |
+| `Segments` | Number of parallel ranged segments |
 
 ### Options
 
-Настройки одного скачивания (те же поля, где применимо) плюс:
+Per-download settings (the same fields where applicable) plus:
 
-| Поле | Описание |
-|------|----------|
-| `URL` | URL — нужен только для `DownloadMany` |
-| `Page` | Скачать HTML-страницу вместо файла |
-| `Outpath` | Путь выходного файла |
+| Field | Description |
+|-------|-------------|
+| `URL` | URL — needed only for `DownloadMany` |
+| `Page` | Download an HTML page instead of a file |
+| `Outpath` | Path of the downloaded file |
 
-Все методы возвращают `error`. Специфические ошибки: `ErrFileExists`, `ErrUnsupportedArchive`.
+All methods return `error`. Sentinel errors: `ErrFileExists`, `ErrChecksumMismatch`, `ErrUnsupportedArchive`.
 
-> **v2.0:** методы больше не завершают процесс через `log.Fatal`/`panic` и возвращают `error`. Это несовместимое изменение по сравнению с v1.
+> **v2.0:** methods no longer terminate the process via `log.Fatal`/`panic` and return `error` instead. This is a breaking change compared to v1.
 
 ## Reliability features
 
@@ -107,7 +111,7 @@ Atomic writes, resume and checksum verification are always on for file downloads
 - Interrupted downloads resume via `Range` requests (`file.part` is kept on failure)
 - `ErrFileExists`, `ErrChecksumMismatch`, `ErrUnsupportedArchive` are checkable with `errors.Is`
 
-Progress and throttling:
+Progress, throttling and multi-segment downloads:
 
 ```go
 gd := godownload.GoDownload{Timeout: 30 * time.Second}
