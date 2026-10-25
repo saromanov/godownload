@@ -243,7 +243,11 @@ func (gd *GoDownload) fileDownload(path string, opt *Options) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			gd.logf("closing response body: %v", cerr)
+		}
+	}()
 
 	if err := checkStatusCode(resp, path); err != nil {
 		return err
@@ -274,7 +278,11 @@ func (gd *GoDownload) pageDownload(path string) (string, error) {
 		return "", err
 	}
 
-	defer response.Body.Close()
+	defer func() {
+		if cerr := response.Body.Close(); cerr != nil {
+			gd.logf("closing response body: %v", cerr)
+		}
+	}()
 	if err := checkStatusCode(response, path); err != nil {
 		return "", err
 	}
@@ -307,10 +315,16 @@ func (gd *GoDownload) logf(format string, args ...any) {
 	logger.Printf(format, args...)
 }
 
+// drainBody дочитывает и закрывает тело ответа
+func drainBody(body io.ReadCloser) {
+	_, _ = io.Copy(io.Discard, body)
+	_ = body.Close()
+}
+
 // checkStatusCode validates the HTTP status code of the response
 func checkStatusCode(resp *http.Response, path string) error {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		io.Copy(io.Discard, resp.Body)
+		drainBody(resp.Body)
 		return fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, path)
 	}
 	return nil
@@ -324,14 +338,11 @@ func downloadGeneral(client *http.Client, retry int, url, useragent, auth string
 	for {
 		res, err := download(client, url, useragent, auth)
 		if err == nil {
-			if res.StatusCode >= 500 && res.StatusCode < 600 && (retry == 0 || retrynums == retry) {
-				io.Copy(io.Discard, res.Body)
-				res.Body.Close()
-				return res, nil
-			}
 			if res.StatusCode >= 500 && res.StatusCode < 600 {
-				io.Copy(io.Discard, res.Body)
-				res.Body.Close()
+				drainBody(res.Body)
+				if retry == 0 || retrynums == retry {
+					return nil, fmt.Errorf("unexpected status code %d from %s", res.StatusCode, url)
+				}
 				log.Printf("Tried again to download from %s: status %d", url, res.StatusCode)
 				time.Sleep(pause)
 				pause *= 2
@@ -386,7 +397,11 @@ func copyToFile(resp io.Reader, outpath string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("opening target file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("closing target file: %v", cerr)
+		}
+	}()
 
 	n, err := io.Copy(f, resp)
 	if err != nil {
@@ -483,14 +498,26 @@ func zipPack(path string) error {
 	if err != nil {
 		return err
 	}
-	defer newfile.Close()
+	defer func() {
+		if cerr := newfile.Close(); cerr != nil {
+			log.Printf("closing archive file: %v", cerr)
+		}
+	}()
 	zipit := zip.NewWriter(newfile)
-	defer zipit.Close()
+	defer func() {
+		if cerr := zipit.Close(); cerr != nil {
+			log.Printf("closing zip writer: %v", cerr)
+		}
+	}()
 	zipfile, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer zipfile.Close()
+	defer func() {
+		if cerr := zipfile.Close(); cerr != nil {
+			log.Printf("closing source file: %v", cerr)
+		}
+	}()
 	info, err := zipfile.Stat()
 	if err != nil {
 		return err

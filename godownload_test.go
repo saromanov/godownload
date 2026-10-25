@@ -20,7 +20,7 @@ func newTestServer(t *testing.T, status int, body string) *httptest.Server {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		w.WriteHeader(status)
-		fmt.Fprint(w, body)
+		_, _ = fmt.Fprint(w, body)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -35,7 +35,7 @@ func createFileWithLinks(t *testing.T, filename string, urls ...string) {
 	if err := os.WriteFile(filename, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Remove(filename) })
+	t.Cleanup(func() { _ = os.Remove(filename) })
 }
 
 func TestDownload(t *testing.T) {
@@ -130,7 +130,7 @@ func TestDownloadRetryThenSuccess(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		fmt.Fprint(w, testBody)
+		_, _ = fmt.Fprint(w, testBody)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -148,7 +148,7 @@ func TestDownloadUserAgent(t *testing.T) {
 	var ua atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ua.Store(r.Header.Get("User-Agent"))
-		fmt.Fprint(w, testBody)
+		_, _ = fmt.Fprint(w, testBody)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -167,7 +167,7 @@ func TestDownloadAuth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username, password, _ := r.BasicAuth()
 		user, pass = username, password
-		fmt.Fprint(w, testBody)
+		_, _ = fmt.Fprint(w, testBody)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -346,7 +346,7 @@ func TestHasURL(t *testing.T) {
 
 func TestNextFreeName(t *testing.T) {
 	f, _ := os.Create("nf.txt")
-	f.Close()
+	_ = f.Close()
 	got := nextFreeName("nf.txt")
 	if got != "nf_1.txt" {
 		t.Fatalf("expected nf_1.txt, got %s", got)
