@@ -200,6 +200,30 @@ set: the freshness check decides whether it is re-downloaded. Works with
 multi-segment downloads (the probe request is conditional) and with the CLI
 `--no-stale` flag.
 
+## Downloading HuggingFace models
+
+`DownloadHF` fetches a full model repository (all files, nested paths preserved):
+
+```go
+gd := godownload.GoDownload{}
+results, err := gd.DownloadHFResult(ctx, "meta-llama/Llama-3.2-1B",
+    &godownload.Options{Outpath: "llama-3.2-1b", Segments: 8, NoStale: true})
+if err != nil {
+    return err
+}
+for _, r := range results {
+    fmt.Printf("%s: %d bytes\n", r.Path, r.Size)
+}
+```
+
+- Files are resolved through `https://huggingface.co/<repo>/resolve/main/...`
+  (LFS redirects to the CDN are followed automatically)
+- Every file keeps its repository path under `Options.Outpath`
+- `Segments`, `RateLimit`, `Retry`, `NoStale` and other options apply per file;
+  `NoStale` makes repeated runs transfer nothing when the repository is unchanged
+- `Options.HFAPIURL` points the client to a self-hosted HuggingFace-compatible
+  endpoint (or a test server)
+
 ## Context support
 
 Every download method has a context-aware variant (`DownloadContext`,
@@ -214,6 +238,29 @@ The repository ships a CLI built on top of the library (see the [release workflo
 godownload [flags] URL...
 godownload --manifest downloads.yaml
 godownload --from-file links.txt --segments 8 --checksum sha256:...
+godownload --hf owner/model --outdir ./models --json
+```
+
+The `--json` flag prints a machine-readable report for agents and scripts —
+one object per download (`url`, `path`, `size`, `bytes`, `segments`,
+`checksum_verified`, `cache_hit`, `duration_ns`) plus an `error` field on failure:
+
+```
+$ godownload --hf meta-llama/Llama-3.2-1B --outdir ./models --json
+{
+  "downloads": [
+    {
+      "url": "https://huggingface.co/meta-llama/Llama-3.2-1B/resolve/main/config.json",
+      "path": "models/config.json",
+      "size": 861,
+      "bytes": 861,
+      "segments": 1,
+      "checksum_verified": false,
+      "cache_hit": false,
+      "duration_ns": 45231500
+    }
+  ]
+}
 ```
 
 ## Contributing

@@ -171,6 +171,11 @@ type Options struct {
 	// It overrides GoDownload.NoStale for this download
 	NoStale bool
 
+	//HFAPIURL overrides the HuggingFace base URL for DownloadHF
+	// (self-hosted deployments, tests). Empty means
+	// https://huggingface.co
+	HFAPIURL string
+
 	// mirrors lists alternative URLs tried in order when the primary
 	// URL fails. Populated by FromManifest
 	mirrors []string
@@ -342,6 +347,13 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 		// The file goes to Outdir keeping the base name from outpath
 		outpath = filepath.Join(gd.Outdir, filepath.Base(outpath))
 		opt.Outpath = outpath
+	}
+	// Nested output paths (HF repositories, manifests) are created
+	// on demand
+	if dir := filepath.Dir(outpath); dir != "." && dir != gd.Outdir {
+		if err := createDir(dir); err != nil {
+			return Result{}, fmt.Errorf("creating output directory: %w", err)
+		}
 	}
 
 	retry := 0
