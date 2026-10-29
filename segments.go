@@ -19,7 +19,7 @@ const minSegmentSize = 1024 * 1024
 // assembles the result into outpath. It falls back to a plain
 // single-stream download when the server does not advertise
 // support for Range requests
-func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt *Options, outpath string, starttime time.Time) (Result, error) {
+func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt *Options, outpath string, starttime time.Time, cond *condHeaders) (Result, error) {
 	retry := opt.Retry
 	useragent := defaultUserAgent
 	if opt.UserAgent != "" {
@@ -27,7 +27,7 @@ func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt
 	}
 
 	// Probe: request the first byte to learn the size and Range support
-	probe, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, opt.Auth, nil, nil)
+	probe, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, opt.Auth, nil, nil, cond)
 	if err != nil {
 		return Result{}, err
 	}
@@ -36,9 +36,26 @@ func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt
 			gd.logf("closing probe body: %v", cerr)
 		}
 	}()
+	// The server reports the local file unchanged: skip the transfer
+	if probe.StatusCode == http.StatusNotModified {
+		res := Result{
+			URL:      path,
+			Path:     outpath,
+			Size:     fileSize(outpath),
+			Segments: 1,
+			CacheHit: true,
+			Duration: time.Since(starttime),
+		}
+		if opt.OnDone != nil {
+			opt.OnDone(res)
+		}
+		gd.logf("Skipping download of %s: file is up to date", outpath)
+		return res, nil
+	}
 	if err := checkStatusCode(probe, path); err != nil {
 		return Result{}, err
 	}
+	saveCacheMeta(path, outpath, opt.NoStale, probe)
 
 	total := probe.ContentLength
 	acceptRanges := probe.Header.Get("Accept-Ranges") == "bytes"
@@ -169,7 +186,7 @@ func (gd *GoDownload) downloadSegment(ctx context.Context, path string, opt *Opt
 		return nil // segment already complete
 	}
 
-	resp, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, opt.Auth, &startpos, &end)
+	resp, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, opt.Auth, &startpos, &end, nil)
 	if err != nil {
 		return err
 	}

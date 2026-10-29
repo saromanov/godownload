@@ -27,6 +27,7 @@ func main() {
 		checksum = flag.String("checksum", "", "checksum in the <algorithm>:<hex> format")
 		timeout  = flag.Duration("timeout", 0, "HTTP timeout (0 = none)")
 		quiet    = flag.Bool("quiet", false, "suppress log output")
+		nostale  = flag.Bool("no-stale", false, "skip downloads when the server reports the file unchanged")
 	)
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage: godownload [flags] URL...\n\nFlags:\n")
@@ -42,6 +43,7 @@ func main() {
 		Checksum:   *checksum,
 		Timeout:    *timeout,
 		Quiet:      *quiet,
+		NoStale:    *nostale,
 		Configpath: os.Getenv("GODOWNLOAD_CONFIG"),
 	}
 

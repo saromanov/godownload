@@ -93,6 +93,13 @@ type GoDownload struct {
 	// If nil, a client with Timeout is used
 	HTTPClient *http.Client
 
+	//NoStale skips the download when the server reports the file
+	// unchanged since the last download of the same output file
+	// (conditional request with If-None-Match / If-Modified-Since
+	// based on a sidecar "<outpath>.gd-meta" file). The Result has
+	// CacheHit set and Bytes of zero
+	NoStale bool
+
 	//OnDone is called once per successfully downloaded file
 	// with the outcome of the download (path, size, duration, ...)
 	// It is the same Result that the *Result methods return
@@ -159,6 +166,11 @@ type Options struct {
 	// It overrides GoDownload.OnDone for this download
 	OnDone func(Result)
 
+	//NoStale skips the download when the server reports the file
+	// unchanged since the last download of the same output file.
+	// It overrides GoDownload.NoStale for this download
+	NoStale bool
+
 	// mirrors lists alternative URLs tried in order when the primary
 	// URL fails. Populated by FromManifest
 	mirrors []string
@@ -211,9 +223,13 @@ func (gd *GoDownload) download(ctx context.Context, path string, opt *Options) (
 			RateLimit:  gd.RateLimit,
 			Segments:   gd.Segments,
 			OnDone:     gd.OnDone,
+			NoStale:    gd.NoStale,
 		}
 	} else if opt.OnDone == nil {
 		opt.OnDone = gd.OnDone
+	}
+	if !opt.NoStale {
+		opt.NoStale = gd.NoStale
 	}
 
 	if opt.Page {
@@ -342,10 +358,13 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 	gd.logf("Start to download from %s", path)
 	starttime := time.Now()
 
+	nostale := opt != nil && opt.NoStale
+	cond := cacheHeadersFor(outpath, nostale)
+
 	// Multi-segment download: split the file into ranged parallel
 	// segments when the server supports it
 	if opt != nil && opt.Segments > 1 {
-		return gd.multiSegmentDownload(ctx, path, opt, outpath, starttime)
+		return gd.multiSegmentDownload(ctx, path, opt, outpath, starttime, cond)
 	}
 
 	// If a temp file from a previous interrupted download exists,
@@ -358,7 +377,7 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 		gd.logf("Resuming download of %s from byte %d", path, offset)
 	}
 
-	resp, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, auth, rangeset, nil)
+	resp, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, auth, rangeset, nil, cond)
 	if err != nil {
 		return Result{}, err
 	}
@@ -367,6 +386,24 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 			gd.logf("closing response body: %v", cerr)
 		}
 	}()
+
+	// The server reports the local file unchanged since the last
+	// download: skip the transfer
+	if resp.StatusCode == http.StatusNotModified {
+		res := Result{
+			URL:      path,
+			Path:     outpath,
+			Size:     fileSize(outpath),
+			Segments: 1,
+			CacheHit: true,
+			Duration: time.Since(starttime),
+		}
+		if opt.OnDone != nil {
+			opt.OnDone(res)
+		}
+		gd.logf("Skipping download of %s: file is up to date", outpath)
+		return res, nil
+	}
 
 	if err := checkStatusCode(resp, path); err != nil {
 		return Result{}, err
@@ -396,6 +433,7 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 	if err != nil {
 		return Result{}, err
 	}
+	saveCacheMeta(path, outpath, nostale, resp)
 	verified := opt.Checksum != ""
 	gd.logf("Finish to download from %s in %s. Transferred bytes: %d", path,
 		time.Since(starttime), transferred)

@@ -35,6 +35,12 @@ type Result struct {
 	// (Options.Checksum) and the downloaded file passed verification
 	ChecksumVerified bool
 
+	// CacheHit is true when the download was skipped because the
+	// server reported the file unchanged since the last download
+	// (Options.NoStale). Bytes is 0 and Size is the size of the
+	// already existing file
+	CacheHit bool
+
 	// Duration is the wall time the download took
 	Duration time.Duration
 }
