@@ -19,7 +19,7 @@ const minSegmentSize = 1024 * 1024
 // assembles the result into outpath. It falls back to a plain
 // single-stream download when the server does not advertise
 // support for Range requests
-func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt *Options, outpath string, starttime time.Time) error {
+func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt *Options, outpath string, starttime time.Time) (Result, error) {
 	retry := opt.Retry
 	useragent := defaultUserAgent
 	if opt.UserAgent != "" {
@@ -29,7 +29,7 @@ func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt
 	// Probe: request the first byte to learn the size and Range support
 	probe, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, opt.Auth, nil, nil)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	defer func() {
 		if cerr := probe.Body.Close(); cerr != nil {
@@ -37,7 +37,7 @@ func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt
 		}
 	}()
 	if err := checkStatusCode(probe, path); err != nil {
-		return err
+		return Result{}, err
 	}
 
 	total := probe.ContentLength
@@ -53,11 +53,28 @@ func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt
 		}
 		transferred, err := gd.downloadToFile(body, outpath, nil, opt.Checksum)
 		if err != nil {
-			return err
+			return Result{}, err
 		}
+		verified := opt.Checksum != ""
 		gd.logf("Finish to download from %s in %s. Transferred bytes: %d", path,
 			time.Since(starttime), transferred)
-		return gd.postProcess(opt, outpath)
+		finalpath, _, err := gd.postProcess(opt, outpath, verified)
+		if err != nil {
+			return Result{}, err
+		}
+		res := Result{
+			URL:              path,
+			Path:             finalpath,
+			Size:             fileSize(finalpath),
+			Bytes:            transferred,
+			Segments:         1,
+			ChecksumVerified: verified,
+			Duration:         time.Since(starttime),
+		}
+		if opt.OnDone != nil {
+			opt.OnDone(res)
+		}
+		return res, nil
 	}
 
 	segments := opt.Segments
@@ -112,16 +129,32 @@ func (gd *GoDownload) multiSegmentDownload(ctx context.Context, path string, opt
 		for _, sp := range segPaths {
 			_ = os.Remove(sp)
 		}
-		return errors.Join(segErrs...)
+		return Result{}, errors.Join(segErrs...)
 	}
 
 	// Assemble segments into the final file atomically
 	if err := assembleSegments(segPaths, outpath); err != nil {
-		return err
+		return Result{}, err
 	}
 	gd.logf("Finish to download from %s in %s. Transferred bytes: %d (%d segments)",
 		path, time.Since(starttime), total, segments)
-	return gd.postProcess(opt, outpath)
+	finalpath, verified, err := gd.postProcess(opt, outpath, false)
+	if err != nil {
+		return Result{}, err
+	}
+	res := Result{
+		URL:              path,
+		Path:             finalpath,
+		Size:             fileSize(finalpath),
+		Bytes:            total,
+		Segments:         segments,
+		ChecksumVerified: verified,
+		Duration:         time.Since(starttime),
+	}
+	if opt.OnDone != nil {
+		opt.OnDone(res)
+	}
+	return res, nil
 }
 
 // downloadSegment fetches one ranged part of the file into segPath
@@ -260,22 +293,36 @@ func assembleSegments(segPaths []string, outpath string) error {
 	return nil
 }
 
-// postProcess applies checksum verification and archiving
-// after the file has landed under its final name
-func (gd *GoDownload) postProcess(opt *Options, outpath string) error {
-	if opt != nil && opt.Checksum != "" {
+// postProcess applies checksum verification (when not already done)
+// and archiving. It returns the final path of the artifact (the
+// archive path when archiving is applied) and whether the checksum
+// verification succeeded
+func (gd *GoDownload) postProcess(opt *Options, outpath string, alreadyVerified bool) (string, bool, error) {
+	verified := alreadyVerified
+	if opt != nil && opt.Checksum != "" && !alreadyVerified {
 		if err := verifyChecksum(outpath, opt.Checksum); err != nil {
 			_ = os.Remove(outpath)
-			return err
+			return "", false, err
 		}
+		verified = true
 	}
 	if opt != nil && opt.Archive != "" {
 		if err := archivePack(outpath, opt.Archive); err != nil {
-			return fmt.Errorf("packing file: %w", err)
+			return "", verified, fmt.Errorf("packing file: %w", err)
 		}
 		if err := os.Remove(outpath); err != nil {
-			return fmt.Errorf("removing original file after packing: %w", err)
+			return "", verified, fmt.Errorf("removing original file after packing: %w", err)
 		}
+		return outpath + "." + opt.Archive, verified, nil
 	}
-	return nil
+	return outpath, verified, nil
+}
+
+// fileSize returns the size of the file at path, 0 on any failure
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
