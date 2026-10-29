@@ -47,6 +47,12 @@ go get github.com/saromanov/godownload
 go install github.com/saromanov/godownload/cmd/godownload@latest
 ```
 
+macOS via Homebrew:
+
+```
+brew install saromanov/tap/godownload
+```
+
 ## Usage
 
 Download a file (the name is taken from the URL):
