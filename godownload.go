@@ -2,14 +2,12 @@ package godownload
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -94,6 +92,11 @@ type GoDownload struct {
 	//HTTPClient allows to provide a custom http.Client.
 	// If nil, a client with Timeout is used
 	HTTPClient *http.Client
+
+	//OnDone is called once per successfully downloaded file
+	// with the outcome of the download (path, size, duration, ...)
+	// It is the same Result that the *Result methods return
+	OnDone func(Result)
 }
 
 // Options defines attributes for config of GoDownload
@@ -151,6 +154,11 @@ type Options struct {
 	// Values < 2 mean a single stream. Default: 1
 	Segments int
 
+	//OnDone is called once per successfully downloaded file
+	// with the outcome of the download (path, size, duration, ...)
+	// It overrides GoDownload.OnDone for this download
+	OnDone func(Result)
+
 	// mirrors lists alternative URLs tried in order when the primary
 	// URL fails. Populated by FromManifest
 	mirrors []string
@@ -166,13 +174,26 @@ func (gd *GoDownload) Download(path string, opt *Options) error {
 // in-flight HTTP requests are aborted and no file is written after
 // the context is done
 func (gd *GoDownload) DownloadContext(ctx context.Context, path string, opt *Options) error {
+	_, err := gd.download(ctx, path, opt)
+	return err
+}
+
+// DownloadResult is the context-aware download that reports the outcome
+func (gd *GoDownload) DownloadResult(ctx context.Context, path string, opt *Options) (Result, error) {
+	return gd.download(ctx, path, opt)
+}
+
+// download is the internal download entry point: it resolves
+// global config, builds effective options and dispatches to the
+// page or file downloader
+func (gd *GoDownload) download(ctx context.Context, path string, opt *Options) (Result, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return Result{}, err
 	}
 	if gd.Configpath != "" {
 		opta, err := loadConfig(gd.Configpath)
 		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
+			return Result{}, fmt.Errorf("loading config: %w", err)
 		}
 		gd = opta
 	}
@@ -189,27 +210,14 @@ func (gd *GoDownload) DownloadContext(ctx context.Context, path string, opt *Opt
 			Checksum:   gd.Checksum,
 			RateLimit:  gd.RateLimit,
 			Segments:   gd.Segments,
+			OnDone:     gd.OnDone,
 		}
+	} else if opt.OnDone == nil {
+		opt.OnDone = gd.OnDone
 	}
 
 	if opt.Page {
-		result, err := gd.pageDownload(ctx, path)
-		if err != nil {
-			return err
-		}
-
-		outpath := opt.Outpath
-		if outpath == "" {
-			outpath, err = getFileNameFromURL(path)
-			if err != nil {
-				return err
-			}
-		}
-		if err := os.WriteFile(outpath, []byte(result), 0o644); err != nil {
-			return fmt.Errorf("writing page to file: %w", err)
-		}
-		gd.logf("Finish to download from %s", path)
-		return nil
+		return gd.pageDownload(ctx, path, opt)
 	}
 
 	return gd.fileDownload(ctx, path, opt)
@@ -225,27 +233,15 @@ func (gd *GoDownload) DownloadMany(items []*Options) error {
 // DownloadManyContext downloads several files concurrently,
 // honouring ctx cancellation
 func (gd *GoDownload) DownloadManyContext(ctx context.Context, items []*Options) error {
-	errs := make([]error, len(items))
-	var wg sync.WaitGroup
-	for i, item := range items {
-		wg.Add(1)
-		go func(idx int, it *Options) {
-			defer wg.Done()
-			errs[idx] = gd.DownloadContext(ctx, it.URL, it)
-		}(i, item)
-	}
-	wg.Wait()
+	_, err := gd.downloadMany(ctx, items)
+	return err
+}
 
-	multi := make([]error, 0, len(items))
-	for _, err := range errs {
-		if err != nil {
-			multi = append(multi, err)
-		}
-	}
-	if len(multi) > 0 {
-		return errors.Join(multi...)
-	}
-	return nil
+// DownloadManyResult is the context-aware DownloadMany reporting results.
+// On partial failure it returns the results of the successful downloads
+// together with the aggregated error
+func (gd *GoDownload) DownloadManyResult(ctx context.Context, items []*Options) ([]Result, error) {
+	return gd.downloadMany(ctx, items)
 }
 
 // DownloadManySimple is identical for DownloadMany, but as arguments is slice of url
@@ -256,15 +252,21 @@ func (gd *GoDownload) DownloadManySimple(items []string) error {
 // DownloadManySimpleContext is the context-aware version
 // of DownloadManySimple
 func (gd *GoDownload) DownloadManySimpleContext(ctx context.Context, items []string) error {
-	result := make([]*Options, 0, len(items))
-	for _, item := range items {
-		name, err := getFileNameFromURL(item)
-		if err != nil {
-			return err
-		}
-		result = append(result, &Options{URL: item, Outpath: name})
+	result, err := manyOptions(items)
+	if err != nil {
+		return err
 	}
 	return gd.DownloadManyContext(ctx, result)
+}
+
+// DownloadManySimpleResult is the context-aware DownloadManySimple
+// reporting results
+func (gd *GoDownload) DownloadManySimpleResult(ctx context.Context, items []string) ([]Result, error) {
+	opts, err := manyOptions(items)
+	if err != nil {
+		return nil, err
+	}
+	return gd.downloadMany(ctx, opts)
 }
 
 // FromFile provides getting links from file and downloading
@@ -281,35 +283,44 @@ func (gd *GoDownload) FromFileContext(ctx context.Context, path string) error {
 	return gd.DownloadManySimpleContext(ctx, urls)
 }
 
+// FromFileResult is the context-aware FromFile reporting results
+func (gd *GoDownload) FromFileResult(ctx context.Context, path string) ([]Result, error) {
+	urls, err := fromFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return gd.DownloadManySimpleResult(ctx, urls)
+}
+
 // fileDownload method provides downloading files.
 // When opt.mirrors is set, the primary URL is tried first and each
 // mirror is tried in order until one succeeds
-func (gd *GoDownload) fileDownload(ctx context.Context, path string, opt *Options) error {
-	err := gd.fileDownloadSingle(ctx, path, opt)
+func (gd *GoDownload) fileDownload(ctx context.Context, path string, opt *Options) (Result, error) {
+	res, err := gd.fileDownloadSingle(ctx, path, opt)
 	if err == nil {
-		return nil
+		return res, nil
 	}
 	for _, mirror := range opt.mirrors {
 		gd.logf("Primary URL failed (%v), trying mirror %s", err, mirror)
-		err = gd.fileDownloadSingle(ctx, mirror, opt)
+		res, err = gd.fileDownloadSingle(ctx, mirror, opt)
 		if err == nil {
-			return nil
+			return res, nil
 		}
 	}
-	return err
+	return Result{}, err
 }
 
 // fileDownloadSingle performs a download from a single URL
-func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *Options) error {
+func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *Options) (Result, error) {
 	if gd.Outdir != "" {
 		if err := createDir(gd.Outdir); err != nil {
-			return fmt.Errorf("creating outdir: %w", err)
+			return Result{}, fmt.Errorf("creating outdir: %w", err)
 		}
 	}
 
 	outpath, err := outpathResolver(path, opt)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	if gd.Outdir != "" {
 		// The file goes to Outdir keeping the base name from outpath
@@ -349,7 +360,7 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 
 	resp, err := downloadGeneral(ctx, gd.client(), retry, path, useragent, auth, rangeset, nil)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
@@ -358,7 +369,7 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 	}()
 
 	if err := checkStatusCode(resp, path); err != nil {
-		return err
+		return Result{}, err
 	}
 
 	// Server ignored the Range request and returned the full body:
@@ -383,31 +394,40 @@ func (gd *GoDownload) fileDownloadSingle(ctx context.Context, path string, opt *
 
 	transferred, err := gd.downloadToFile(body, outpath, rangeset, opt.Checksum)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
+	verified := opt.Checksum != ""
 	gd.logf("Finish to download from %s in %s. Transferred bytes: %d", path,
 		time.Since(starttime), transferred)
 
-	if opt != nil && opt.Archive != "" {
-		if err := archivePack(outpath, opt.Archive); err != nil {
-			return fmt.Errorf("packing file: %w", err)
-		}
-		if err := os.Remove(outpath); err != nil {
-			return fmt.Errorf("removing original file after packing: %w", err)
-		}
+	finalpath, _, err := gd.postProcess(opt, outpath, verified)
+	if err != nil {
+		return Result{}, err
 	}
-	return nil
+	res := Result{
+		URL:              path,
+		Path:             finalpath,
+		Size:             fileSize(finalpath),
+		Bytes:            transferred,
+		Segments:         1,
+		ChecksumVerified: verified,
+		Duration:         time.Since(starttime),
+	}
+	if opt.OnDone != nil {
+		opt.OnDone(res)
+	}
+	return res, nil
 }
 
-// pageDownload downloads the page contents
-func (gd *GoDownload) pageDownload(ctx context.Context, path string) (string, error) {
+// pageDownload downloads the page contents into a file and reports Result
+func (gd *GoDownload) pageDownload(ctx context.Context, path string, opt *Options) (Result, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return "", fmt.Errorf("creating request: %w", err)
+		return Result{}, fmt.Errorf("creating request: %w", err)
 	}
 	response, err := gd.client().Do(req)
 	if err != nil {
-		return "", err
+		return Result{}, err
 	}
 
 	defer func() {
@@ -416,15 +436,38 @@ func (gd *GoDownload) pageDownload(ctx context.Context, path string) (string, er
 		}
 	}()
 	if err := checkStatusCode(response, path); err != nil {
-		return "", err
+		return Result{}, err
 	}
 
 	contents, err := io.ReadAll(response.Body)
 	if err != nil {
-		return "", err
+		return Result{}, err
 	}
 
-	return string(contents), nil
+	outpath := opt.Outpath
+	if outpath == "" {
+		outpath, err = getFileNameFromURL(path)
+		if err != nil {
+			return Result{}, err
+		}
+	}
+	start := time.Now()
+	if err := os.WriteFile(outpath, contents, 0o644); err != nil {
+		return Result{}, fmt.Errorf("writing page to file: %w", err)
+	}
+	res := Result{
+		URL:      path,
+		Path:     outpath,
+		Size:     int64(len(contents)),
+		Bytes:    int64(len(contents)),
+		Segments: 1,
+		Duration: time.Since(start),
+	}
+	if opt.OnDone != nil {
+		opt.OnDone(res)
+	}
+	gd.logf("Finish to download from %s", path)
+	return res, nil
 }
 
 // loadConfig data from .yaml path

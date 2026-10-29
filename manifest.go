@@ -49,30 +49,36 @@ func (gd *GoDownload) FromManifest(manifestpath string) error {
 
 // FromManifestContext is the context-aware version of FromManifest
 func (gd *GoDownload) FromManifestContext(ctx context.Context, manifestpath string) error {
-	if err := ctx.Err(); err != nil {
+	opts, err := manifestOptions(manifestpath)
+	if err != nil {
 		return err
 	}
+	return gd.DownloadManyContext(ctx, opts)
+}
+
+// manifestOptions parses a YAML manifest into per-item options
+func manifestOptions(manifestpath string) ([]*Options, error) {
 	data, err := os.ReadFile(manifestpath)
 	if err != nil {
-		return fmt.Errorf("reading manifest: %w", err)
+		return nil, fmt.Errorf("reading manifest: %w", err)
 	}
 	var items []ManifestItem
 	if err := yaml.Unmarshal(data, &items); err != nil {
-		return fmt.Errorf("parsing manifest: %w", err)
+		return nil, fmt.Errorf("parsing manifest: %w", err)
 	}
 	if len(items) == 0 {
-		return errors.New("manifest is empty")
+		return nil, errors.New("manifest is empty")
 	}
 
 	opts := make([]*Options, 0, len(items))
 	for i, item := range items {
 		if item.URL == "" {
-			return fmt.Errorf("manifest item %d: url is required", i)
+			return nil, fmt.Errorf("manifest item %d: url is required", i)
 		}
 		if item.Out == "" {
 			name, err := getFileNameFromURL(item.URL)
 			if err != nil {
-				return fmt.Errorf("manifest item %d: out is required", i)
+				return nil, fmt.Errorf("manifest item %d: out is required", i)
 			}
 			item.Out = name
 		}
@@ -90,5 +96,5 @@ func (gd *GoDownload) FromManifestContext(ctx context.Context, manifestpath stri
 			opts[len(opts)-1].mirrors = item.Mirrors
 		}
 	}
-	return gd.DownloadManyContext(ctx, opts)
+	return opts, nil
 }

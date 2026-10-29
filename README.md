@@ -104,6 +104,29 @@ Per-download settings (the same fields where applicable) plus:
 
 All methods return `error`. Sentinel errors: `ErrFileExists`, `ErrChecksumMismatch`, `ErrUnsupportedArchive`.
 
+### Download results
+
+Every download method has a `*Result` variant that reports the outcome:
+`DownloadResult`, `DownloadManyResult`, `DownloadManySimpleResult`,
+`FromFileResult`, `FromManifestResult` — all take `context.Context`
+and return `Result{URL, Path, Size, Bytes, Segments, ChecksumVerified, Duration}`.
+Alternatively, `GoDownload.OnDone` (or `Options.OnDone`) is called once
+per successfully downloaded file:
+
+```go
+gd := godownload.GoDownload{}
+res, err := gd.DownloadResult(ctx, "https://example.com/model.bin",
+    &godownload.Options{Checksum: "sha256:...", Segments: 8})
+if err != nil {
+    return err
+}
+fmt.Printf("saved to %s (%d bytes, %d segments, verified: %v, took %s)\n",
+    res.Path, res.Size, res.Segments, res.ChecksumVerified, res.Duration)
+```
+
+`DownloadManyResult` returns the results of successful downloads together
+with an aggregated error on partial failure.
+
 > **v2.0:** methods no longer terminate the process via `log.Fatal`/`panic` and return `error` instead. This is a breaking change compared to v1.
 
 ## Reliability features
