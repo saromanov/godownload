@@ -3,13 +3,48 @@
 [![CI](https://github.com/saromanov/godownload/actions/workflows/ci.yml/badge.svg)](https://github.com/saromanov/godownload/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/saromanov/godownload.svg)](https://pkg.go.dev/github.com/saromanov/godownload)
 [![Go Report Card](https://goreportcard.com/badge/github.com/saromanov/godownload)](https://goreportcard.com/report/github.com/saromanov/godownload)
+[![Release](https://img.shields.io/github/v/release/saromanov/godownload)](https://github.com/saromanov/godownload/releases)
 
-A Go library for downloading files over HTTP: streaming to disk, retries with exponential backoff, parallel downloads, basic authentication, zip archiving, resumable and multi-segment downloads.
+A Go download manager for agents and humans: resumable and multi-segment downloads,
+checksum verification, mirrors, rate limiting, HuggingFace model fetching —
+as a library and a single-binary CLI with a JSON report for tool-calls.
+
+<img src="docs/demo.gif" alt="godownload CLI demo: downloading a HuggingFace model, then a cache hit on the second run" width="880">
+
+## Why godownload
+
+| Feature | godownload | aria2c | wget | curl |
+|---------|-----------|--------|------|------|
+| Resume on failure (`.part`) | ✓ | ✓ (`-c`) | ✓ (`-c`) | ✓ (`-C -`) |
+| Checksum before the file is visible | ✓ (md5/sha1/sha256/sha512) | ✓ (`--checksum`) | — | — |
+| Parallel ranged segments | ✓ | ✓ | — | — |
+| Rate limiting | ✓ | ✓ | ✓ | ✓ |
+| Declarative manifest with mirrors | ✓ (YAML) | ✓ (Metalink) | — | — |
+| ETag freshness check (no re-download) | ✓ (`--no-stale`) | — | — | — |
+| Bulk HuggingFace model fetch | ✓ (`--hf`) | — | — | — |
+| Machine-readable JSON report | ✓ (`--json`) | — | — | — |
+| Library API (Go) | ✓ | RPC only | — | — |
+| Static single binary, zero deps | ✓ | — | ✓ | — |
+| Atomic writes | ✓ | — | — | — |
+
+Download results and per-download callbacks (`OnDone`, `OnProgress`) are available
+to library users (see [Download results](#download-results)).
+
+## Agent workflow
+
+Download a model and get a stable JSON report back — for agent tool-calls
+and scripts:
+
+```bash
+godownload --hf teneso/llama-tiny --outdir ./llama-tiny --json
+# repeat runs transfer nothing until the repository changes on the server
+```
 
 ## Install
 
 ```
 go get github.com/saromanov/godownload
+go install github.com/saromanov/godownload/cmd/godownload@latest
 ```
 
 ## Usage
