@@ -13,36 +13,36 @@ type Result struct {
 	// URL is the source the file was downloaded from.
 	// For manifest and mirror downloads it is the URL that
 	// actually responded successfully
-	URL string
+	URL string `json:"url"`
 
 	// Path is the final path of the downloaded file.
 	// For archived downloads this is the path of the archive
-	Path string
+	Path string `json:"path"`
 
 	// Size is the size of the final file on disk.
 	// 0 is reported when the size cannot be determined
-	Size int64
+	Size int64 `json:"size"`
 
 	// Bytes is the number of bytes transferred over the network.
 	// For resumed downloads it may be less than Size
-	Bytes int64
+	Bytes int64 `json:"bytes"`
 
 	// Segments is the number of parallel segments used.
 	// 1 means a single-stream download
-	Segments int
+	Segments int `json:"segments"`
 
 	// ChecksumVerified is true when a checksum was requested
 	// (Options.Checksum) and the downloaded file passed verification
-	ChecksumVerified bool
+	ChecksumVerified bool `json:"checksum_verified"`
 
 	// CacheHit is true when the download was skipped because the
 	// server reported the file unchanged since the last download
 	// (Options.NoStale). Bytes is 0 and Size is the size of the
 	// already existing file
-	CacheHit bool
+	CacheHit bool `json:"cache_hit"`
 
 	// Duration is the wall time the download took
-	Duration time.Duration
+	Duration time.Duration `json:"duration_ns"`
 }
 
 // FromManifestResult is the context-aware FromManifest reporting results.
