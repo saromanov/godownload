@@ -49,13 +49,20 @@ func checkStatusCode(resp *http.Response, path string) error {
 // Main inner method for downloading with retries and exponential backoff.
 // Retries happen on transport errors and on 5xx responses.
 // If rangeset is not nil, a Range header is sent and a 206 response
-// is expected from servers that support resumable downloads
-func downloadGeneral(ctx context.Context, client *http.Client, retry int, url, useragent, auth string, rangeset *int64, rangeEnd *int64) (*http.Response, error) {
+// is expected from servers that support resumable downloads.
+// A non-nil cond sends validator headers (If-None-Match /
+// If-Modified-Since) for freshness checks; a 304 response is
+// returned to the caller as-is
+func downloadGeneral(ctx context.Context, client *http.Client, retry int, url, useragent, auth string, rangeset *int64, rangeEnd *int64, cond *condHeaders) (*http.Response, error) {
 	retrynums := 0
 	pause := defaultRetryPause
 	for {
-		res, err := download(ctx, client, url, useragent, auth, rangeset, rangeEnd)
+		res, err := download(ctx, client, url, useragent, auth, rangeset, rangeEnd, cond)
 		if err == nil {
+			if res.StatusCode == http.StatusNotModified {
+				drainBody(res.Body)
+				return res, nil
+			}
 			if res.StatusCode >= 500 && res.StatusCode < 600 {
 				drainBody(res.Body)
 				if retry == 0 || retrynums == retry {
@@ -88,7 +95,7 @@ func downloadGeneral(ctx context.Context, client *http.Client, retry int, url, u
 }
 
 // download performs a single GET request
-func download(ctx context.Context, client *http.Client, url, useragent, auth string, rangeset *int64, rangeEnd *int64) (*http.Response, error) {
+func download(ctx context.Context, client *http.Client, url, useragent, auth string, rangeset *int64, rangeEnd *int64, cond *condHeaders) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -104,6 +111,8 @@ func download(ctx context.Context, client *http.Client, url, useragent, auth str
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", *rangeset))
 		}
 	}
+
+	cond.apply(req)
 
 	if auth != "" {
 		res := strings.SplitN(auth, ":", 2)

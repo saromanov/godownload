@@ -91,6 +91,7 @@ Global settings (all optional):
 | `Checksum` | Checksum verification (see below) |
 | `RateLimit` | Download speed cap in bytes per second |
 | `Segments` | Number of parallel ranged segments |
+| `NoStale` | Skip the download when the file is up to date (see below) |
 
 ### Options
 
@@ -173,6 +174,31 @@ if err := gd.FromManifest("downloads.yaml"); err != nil {
     // ...
 }
 ```
+
+## Freshness check (NoStale)
+
+With `NoStale: true` the download is skipped when the server reports the file
+unchanged since the last download of the same output file. After each download
+the validator headers (`ETag`, `Last-Modified`) are stored in a sidecar file
+`<outpath>.gd-meta`; the next download sends a conditional request
+(`If-None-Match` / `If-Modified-Since`) and keeps the existing file on a `304 Not Modified`:
+
+```go
+gd := godownload.GoDownload{}
+res, err := gd.DownloadResult(ctx, "https://example.com/model.bin",
+    &godownload.Options{Outpath: "model.bin", NoStale: true})
+if err != nil {
+    return err
+}
+if res.CacheHit {
+    fmt.Println("already up to date:", res.Path)
+}
+```
+
+An existing output file is not rejected with `ErrFileExists` when `NoStale` is
+set: the freshness check decides whether it is re-downloaded. Works with
+multi-segment downloads (the probe request is conditional) and with the CLI
+`--no-stale` flag.
 
 ## Context support
 

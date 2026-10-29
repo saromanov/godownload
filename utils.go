@@ -25,7 +25,9 @@ func getFileNameFromURL(urlitem string) (string, error) {
 }
 
 // outpathResolver provides correct outpath for downloaded file
-// It's done for better view of the Download method
+// It's done for better view of the Download method.
+// With NoStale an existing file is allowed: the freshness check
+// decides whether it is re-downloaded
 func outpathResolver(path string, item *Options) (string, error) {
 	if item == nil {
 		outpath, err := getFileNameFromURL(path)
@@ -53,8 +55,9 @@ func outpathResolver(path string, item *Options) (string, error) {
 		switch {
 		case item.Alwaysnew:
 			outpath = nextFreeName(outpath)
-		case item.Overwrite:
-			// Перезаписываем существующий файл
+		case item.Overwrite, item.NoStale:
+			// Overwrite the existing file; with NoStale the
+			// freshness check may skip the download
 		default:
 			return "", fmt.Errorf("%w: %s, set Options.Overwrite = true to overwrite", ErrFileExists, outpath)
 		}
