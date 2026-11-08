@@ -4,7 +4,7 @@ Thank you for considering a contribution.
 
 ## Development setup
 
-Go 1.24 or newer is required.
+Go 1.27 or newer is required.
 
 ```sh
 git clone https://github.com/saromanov/godownload
