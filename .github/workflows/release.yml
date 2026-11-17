@@ -60,7 +60,7 @@ jobs:
           sha256sum "godownload-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" > "godownload-${{ matrix.goos }}-${{ matrix.goarch }}${ext}.sha256"
 
       - name: Upload artifacts to the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             godownload-*
