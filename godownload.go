@@ -14,7 +14,7 @@ import (
 )
 
 // Version is the version of the library.
-const Version = "2.1.0"
+const Version = "2.1.1"
 
 // defaultUserAgent is used when the user has not set their own User-Agent.
 const defaultUserAgent = "godownload/" + Version
