@@ -3,7 +3,7 @@
 [![CI](https://github.com/saromanov/godownload/actions/workflows/ci.yml/badge.svg)](https://github.com/saromanov/godownload/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/saromanov/godownload.svg)](https://pkg.go.dev/github.com/saromanov/godownload)
 [![Go Report Card](https://goreportcard.com/badge/github.com/saromanov/godownload)](https://goreportcard.com/report/github.com/saromanov/godownload)
-[![codecov](https://codecov.io/gh/saromanov/godownload/graph/badge.svg)](https://codecov.io/gh/saromanov/godownload)
+[![codecov](https://img.shields.io/codecov/c/github/saromanov/godownload)](https://app.codecov.io/gh/saromanov/godownload)
 [![Release](https://img.shields.io/github/v/release/saromanov/godownload)](https://github.com/saromanov/godownload/releases)
 
 A Go download manager for agents and humans: resumable and multi-segment downloads,
