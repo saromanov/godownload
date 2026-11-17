@@ -311,3 +311,28 @@ func sha256Sum(t *testing.T, data string) string {
 	sum := sha256.Sum256([]byte(data))
 	return fmt.Sprintf("%x", sum)
 }
+
+func TestDownloadManySimpleResult(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	clean("one.txt")
+	gd := &GoDownload{Quiet: true}
+	res, err := gd.DownloadManySimpleResult(t.Context(), []string{srv.URL + "/one.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res))
+	}
+	if res[0].Path != "one.txt" || res[0].Size != int64(len(testBody)) {
+		t.Fatalf("unexpected result: %+v", res[0])
+	}
+	remove(t, "one.txt")
+}
+
+func TestDownloadManySimpleResultInvalidURL(t *testing.T) {
+	// The URL has no file name to resolve the output path from
+	gd := &GoDownload{Quiet: true}
+	if _, err := gd.DownloadManySimpleResult(t.Context(), []string{"http://example.com/"}); err == nil {
+		t.Fatal("expected error for URL without a file name")
+	}
+}

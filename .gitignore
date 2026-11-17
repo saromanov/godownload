@@ -1,4 +1,12 @@
 noresume.txt
 resume.txt
 *.part
+*.gd-meta
+hfmodel/
+hfpartial/
+hfctx/
+hfsimple/
+hfoutdir/
 simple
+coverage.txt
+subprocess.txt

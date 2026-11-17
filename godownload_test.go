@@ -1,11 +1,15 @@
 package godownload
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
+	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -980,5 +984,245 @@ func remove(t *testing.T, path string) {
 	t.Helper()
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDownloadManySimple(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	clean("one.txt", "two.txt")
+	gd := &GoDownload{Quiet: true}
+	if err := gd.DownloadManySimple([]string{srv.URL + "/one.txt", srv.URL + "/two.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if !exist("one.txt") || !exist("two.txt") {
+		t.Fatal("files not downloaded")
+	}
+	remove(t, "one.txt")
+	remove(t, "two.txt")
+}
+
+func TestDownloadManySimpleInvalidURL(t *testing.T) {
+	// The URL has no file name to resolve the output path from
+	gd := &GoDownload{Quiet: true}
+	if err := gd.DownloadManySimple([]string{"http://example.com/"}); err == nil {
+		t.Fatal("expected error for URL without a file name")
+	}
+}
+
+func TestFromFileResultDownload(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	clean("fromfile.txt")
+	createFileWithLinks(t, "links.txt", srv.URL+"/fromfile.txt")
+	gd := &GoDownload{Quiet: true}
+	res, err := gd.FromFileResult(t.Context(), "links.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res))
+	}
+	if res[0].Path != "fromfile.txt" || res[0].Size != int64(len(testBody)) {
+		t.Fatalf("unexpected result: %+v", res[0])
+	}
+	remove(t, "fromfile.txt")
+}
+
+func TestFromFileResultMissingFile(t *testing.T) {
+	gd := &GoDownload{Quiet: true}
+	if _, err := gd.FromFileResult(t.Context(), "nonexistent-links.txt"); err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(cfg, []byte("quiet: true\nretry: 2\noutdir: cfgout\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gd, err := loadConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gd.Quiet || gd.Retry != 2 || gd.Outdir != "cfgout" {
+		t.Fatalf("unexpected config: %+v", gd)
+	}
+
+	if _, err := loadConfig(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
+		t.Fatal("expected error for missing config")
+	}
+
+	bad := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(bad, []byte("retry: [oops"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(bad); err == nil {
+		t.Fatal("expected error for invalid config")
+	}
+}
+
+func TestDownloadWithConfigPath(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfg, []byte("quiet: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clean("cfg.txt")
+	gd := &GoDownload{Configpath: cfg}
+	if err := gd.Download(srv.URL+"/cfg.txt", nil); err != nil {
+		t.Fatal(err)
+	}
+	remove(t, "cfg.txt")
+
+	gdBad := &GoDownload{Configpath: filepath.Join(dir, "missing.yaml")}
+	if err := gdBad.Download(srv.URL+"/x.txt", nil); err == nil {
+		t.Fatal("expected error for missing config")
+	}
+}
+
+func TestChecksumSHA1(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	clean("sha1.txt")
+	sum := fmt.Sprintf("sha1:%x", sha1.Sum([]byte(testBody)))
+	gd := &GoDownload{Quiet: true}
+	if err := gd.Download(srv.URL, &Options{Outpath: "sha1.txt", Checksum: sum}); err != nil {
+		t.Fatal(err)
+	}
+	remove(t, "sha1.txt")
+}
+
+func TestChecksumSHA512(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, testBody)
+	clean("sha512.txt")
+	sum := fmt.Sprintf("sha512:%x", sha512.Sum512([]byte(testBody)))
+	gd := &GoDownload{Quiet: true}
+	if err := gd.Download(srv.URL, &Options{Outpath: "sha512.txt", Checksum: sum}); err != nil {
+		t.Fatal(err)
+	}
+	remove(t, "sha512.txt")
+}
+
+func TestVerifyChecksumMissingFile(t *testing.T) {
+	if err := verifyChecksum("nonexistent-checksum-file.bin", "sha256:abc"); err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestCryptoHashUnknown(t *testing.T) {
+	if cryptoHash("crc32") != nil {
+		t.Fatal("expected nil for unsupported algorithm")
+	}
+	// Algorithm names are case-insensitive
+	if cryptoHash("MD5") == nil {
+		t.Fatal("expected a hash for the upper-case algorithm name")
+	}
+}
+
+func TestAssembleSegmentsMissingSegment(t *testing.T) {
+	clean("assemble.bin", "assemble.bin.part")
+	if err := assembleSegments([]string{"missing-part.bin"}, "assemble.bin"); err == nil {
+		t.Fatal("expected error for a missing segment file")
+	}
+	if exist("assemble.bin.part") {
+		t.Fatal("temp file must be removed on failure")
+	}
+}
+
+func TestMultiSegmentOnProgress(t *testing.T) {
+	// 2 MiB body, 2 segments: OnProgress gets the aggregate progress
+	body := strings.Repeat("p", 2*1024*1024)
+	srv := newRangeServer(t, body)
+	clean("prog.bin")
+
+	var mu sync.Mutex
+	var lastTransferred, lastTotal int64
+	calls := 0
+	gd := &GoDownload{Quiet: true}
+	opts := &Options{
+		Outpath:  "prog.bin",
+		Segments: 2,
+		OnProgress: func(transferred, total int64) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			lastTransferred = transferred
+			lastTotal = total
+		},
+	}
+	if err := gd.Download(srv.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls == 0 {
+		t.Fatal("OnProgress was never called")
+	}
+	if lastTotal != int64(len(body)) {
+		t.Fatalf("expected total %d, got %d", len(body), lastTotal)
+	}
+	if lastTransferred != lastTotal {
+		t.Fatalf("progress must reach the total: %d != %d", lastTransferred, lastTotal)
+	}
+	remove(t, "prog.bin")
+}
+
+func TestLogfQuietAndCustomLogger(t *testing.T) {
+	gd := &GoDownload{Quiet: true}
+	gd.logf("quiet message %d", 1) // must be a no-op
+
+	var buf bytes.Buffer
+	logger := log.New(&buf, "", 0)
+	gd2 := &GoDownload{Logger: logger}
+	gd2.logf("logged %s", "message")
+	if !strings.Contains(buf.String(), "logged message") {
+		t.Fatalf("expected log message, got %q", buf.String())
+	}
+}
+
+func TestFileSizeMissing(t *testing.T) {
+	if fileSize("definitely-missing-file") != 0 {
+		t.Fatal("expected 0 for a missing file")
+	}
+}
+
+func TestWriteCacheMetaErrors(t *testing.T) {
+	// nil meta with an existing sidecar: the stale sidecar is removed
+	metaPath := filepath.Join(t.TempDir(), "file.gd-meta")
+	if err := os.WriteFile(metaPath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCacheMeta(metaPath, nil); err != nil {
+		t.Fatal(err)
+	}
+	if exist(metaPath) {
+		t.Fatal("stale sidecar must be removed")
+	}
+	// Writing into a missing directory fails
+	if err := writeCacheMeta(filepath.Join(t.TempDir(), "nodir", "m.gd-meta"), &cacheMeta{ETag: "e"}); err == nil {
+		t.Fatal("expected error for a missing directory")
+	}
+}
+
+func TestOutpathResolverNilItemExistingFile(t *testing.T) {
+	clean("dupnil.txt")
+	if err := os.WriteFile("dupnil.txt", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := outpathResolver("http://example.com/dupnil.txt", nil); err == nil {
+		t.Fatal("expected error for an existing file without Options")
+	}
+	remove(t, "dupnil.txt")
+}
+
+func TestValidURLInvalid(t *testing.T) {
+	if validURL("ht tp://host") {
+		t.Fatal("expected an unparsable URL to be invalid")
+	}
+}
+
+func TestDownloadPageInvalidURL(t *testing.T) {
+	gd := &GoDownload{Quiet: true}
+	if _, err := gd.download(t.Context(), "ht tp://bad", &Options{Page: true}); err == nil {
+		t.Fatal("expected error for an invalid URL")
 	}
 }

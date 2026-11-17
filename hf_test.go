@@ -1,6 +1,7 @@
 package godownload
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -149,4 +150,97 @@ func TestDownloadHFManyErrorPartial(t *testing.T) {
 		t.Fatalf("successful file result lost: %+v", res)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll("hfpartial") })
+}
+
+func TestDownloadHFSimple(t *testing.T) {
+	_ = os.RemoveAll("hfsimple")
+	repo := "owner/simple-model"
+	srv := newHFServer(t, repo, map[string]string{"config.json": `{}`})
+	gd := &GoDownload{Quiet: true}
+	if err := gd.DownloadHF(repo, &Options{Outpath: "hfsimple", HFAPIURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if !exist(filepath.Join("hfsimple", "config.json")) {
+		t.Fatal("config.json not found")
+	}
+	_ = os.RemoveAll("hfsimple")
+}
+
+func TestDownloadHFContextDownload(t *testing.T) {
+	_ = os.RemoveAll("hfctx")
+	repo := "owner/model"
+	srv := newHFServer(t, repo, map[string]string{"a.txt": "a"})
+	gd := &GoDownload{Quiet: true}
+	if err := gd.DownloadHFContext(t.Context(), repo, &Options{Outpath: "hfctx", HFAPIURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if !exist(filepath.Join("hfctx", "a.txt")) {
+		t.Fatal("a.txt not found")
+	}
+	_ = os.RemoveAll("hfctx")
+}
+
+func TestDownloadHFGlobalOutdir(t *testing.T) {
+	_ = os.RemoveAll("hfoutdir")
+	repo := "owner/model"
+	srv := newHFServer(t, repo, map[string]string{"m.txt": "m"})
+	gd := &GoDownload{Quiet: true, Outdir: "hfoutdir"}
+	if err := gd.DownloadHF(repo, &Options{HFAPIURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if !exist(filepath.Join("hfoutdir", "m.txt")) {
+		t.Fatal("m.txt not found in the global outdir")
+	}
+	_ = os.RemoveAll("hfoutdir")
+}
+
+func TestDownloadHFEmptyRepoName(t *testing.T) {
+	gd := &GoDownload{Quiet: true}
+	if _, err := gd.DownloadHFResult(t.Context(), "", nil); err == nil {
+		t.Fatal("expected an error for an empty repository name")
+	}
+}
+
+func TestDownloadHFInvalidAuthFormat(t *testing.T) {
+	repo := "owner/model"
+	srv := newHFServer(t, repo, map[string]string{"f.txt": "f"})
+	gd := &GoDownload{Quiet: true}
+	if _, err := gd.DownloadHFResult(t.Context(), repo, &Options{HFAPIURL: srv.URL, Auth: "useronly"}); err == nil {
+		t.Fatal("expected an error for auth without a password")
+	}
+}
+
+func TestDownloadHFDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "not json")
+	}))
+	t.Cleanup(srv.Close)
+	gd := &GoDownload{Quiet: true}
+	if _, err := gd.DownloadHFResult(t.Context(), "owner/model", &Options{HFAPIURL: srv.URL}); err == nil {
+		t.Fatal("expected a decoding error")
+	}
+}
+
+func TestHfFilesNilClient(t *testing.T) {
+	repo := "owner/model"
+	srv := newHFServer(t, repo, map[string]string{"x.bin": "x"})
+	// A nil client falls back to http.DefaultClient
+	files, err := hfFiles(t.Context(), nil, repo, &Options{HFAPIURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "x.bin" {
+		t.Fatalf("unexpected file list: %v", files)
+	}
+}
+
+func TestHfFilesCancelledContext(t *testing.T) {
+	repo := "owner/model"
+	srv := newHFServer(t, repo, map[string]string{"x.bin": "x"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := hfFiles(ctx, nil, repo, &Options{HFAPIURL: srv.URL}); err == nil {
+		t.Fatal("expected an error for a cancelled context")
+	}
 }
