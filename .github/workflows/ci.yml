@@ -38,7 +38,7 @@ jobs:
           go tool covdata textfmt -i=/tmp/subcover -o=subprocess.txt
       - name: Upload coverage to Codecov
         if: matrix.go-version == '1.27'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.txt,subprocess.txt
           token: ${{ secrets.CODECOV_TOKEN }}
